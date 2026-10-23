@@ -3,14 +3,11 @@
 아이폰에서 **TFT(전략적 팀 전투)를 하면서 덱 가이드를 PiP(화면 속 화면)로 띄워 두는** 웹 도구예요.
 설치할 것 없이 사파리에서 페이지를 열고 버튼 한 번이면 됩니다.
 
-| 페이지 | 주소 | 하는 일 |
-|---|---|---|
-| **TFT 덱 PiP** | https://jihwan0102.github.io/tft-pip-tools/comps.html | MetaTFT 추천 덱을 한 장씩 PiP로 보여줘요 |
-| PiP 시계 / 타이머 | https://jihwan0102.github.io/tft-pip-tools/ | 시계나 카운트다운을 PiP로 띄워요 |
+👉 **https://jihwan0102.github.io/tft-pip-tools/**
 
-## TFT 덱 PiP 사용법
+## 사용법
 
-1. 아이폰 **사파리**로 [comps.html](https://jihwan0102.github.io/tft-pip-tools/comps.html)을 엽니다.
+1. 아이폰 **사파리**로 [jihwan0102.github.io/tft-pip-tools](https://jihwan0102.github.io/tft-pip-tools/)를 엽니다. 홈 화면에 추가해 두면 편해요.
 2. 덱 목록이 뜨고, 아래 로그에 `영상 모드: PiP ±10초 버튼으로 덱 이동`이 나올 때까지 몇 초 기다립니다.
 3. 보고 싶은 덱을 목록에서 누르거나 **◀ ▶** 로 고릅니다.
 4. **PiP 시작**을 누르면 덱 화면이 작은 창으로 떠요.
@@ -30,12 +27,6 @@
 ### 데이터
 - [MetaTFT](https://www.metatft.com/comps)의 **현재 패치 · 최근 3일 · 플래티넘 이상** 통계를 써서, 사이트 기본 화면과 같은 순서·티어로 보여줘요.
 - 페이지를 열 때마다 새로 받아오고, 열어 둔 채로 하루가 지나면 PiP가 꺼져 있을 때 자동으로 새로고침해요.
-
-## PiP 시계 / 타이머 사용법
-
-1. [index.html](https://jihwan0102.github.io/tft-pip-tools/)을 열고 **PiP 시작**을 누르면 시계가 떠요.
-2. **모드** 버튼을 누르고 분을 입력하면 카운트다운으로 바뀌어요. 0이 되면 화면이 빨개져요.
-3. 주소 뒤에 `?t=분`을 붙이면 바로 타이머로 시작해요. 예: `…/tft-pip-tools/?t=5`
 
 ## 동작 환경
 
