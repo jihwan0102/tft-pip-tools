@@ -43,26 +43,13 @@
   .controls button { height: 52px; border-radius: var(--radius-control); border: 0; cursor: pointer; }
   .step { background: var(--surface); font-size: 18px; }
   .primary { background: #fff; color: #000; font-weight: 800; font-size: 16px; }
-  .step:active, .seg button:active, .row:active { background: var(--raised); }
+  .step:active, .row:active { background: var(--raised); }
   .primary:active { background: #d9d9d9; }
 
-  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--surface); border-radius: var(--radius-control); }
-  .seg button { height: 40px; border: 0; border-radius: var(--radius-control); background: none; color: var(--muted); cursor: pointer; }
-  .seg button[aria-pressed="true"] { background: var(--raised); color: var(--text); font-weight: 700; }
-  .seg button[hidden] { display: none; }
 
-  .auto { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 0 8px 0 20px; background: var(--surface); border-radius: var(--radius-card); }
-  .auto label { color: var(--muted); }
-  .auto select { height: 36px; padding: 0 14px; border: 1px solid var(--control); border-radius: var(--radius-control); background: var(--ground); }
-  .hint { margin: 0; padding: 0 4px; color: var(--muted); font-size: 13px; line-height: 20px; }
 
   .comps { display: grid; gap: var(--gap); align-content: start; }
   .comps h2 { margin: 4px 4px 0; font-size: 16px; line-height: 24px; font-weight: 700; }
-  .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .tiers button { display: grid; gap: 2px; justify-items: start; padding: 10px 12px; min-height: 61px; border: 1.5px solid transparent; border-radius: 16px; background: var(--surface); cursor: pointer; text-align: left; }
-  .tiers button span { color: var(--muted); font-size: 13px; }
-  .tiers button strong { font-size: 16px; }
-  .tiers button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); }
 
   #list { display: grid; background: var(--surface); border-radius: var(--radius-card); padding: 6px; }
   .row { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 12px; min-height: 60px; padding: 8px 14px 8px 10px; border: 0; border-radius: 14px; background: none; text-align: left; cursor: pointer; }
@@ -77,11 +64,8 @@
   .skeleton { height: 60px; margin: 2px 0; border-radius: 14px; background: #161616; }
 
   footer { padding: 8px var(--pad) 32px; max-width: 1180px; margin: 0 auto; color: var(--faint); font-size: 12px; }
-  footer details { margin-top: 8px; }
-  footer summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--muted); }
-  #log, #prevlog { margin: 0 0 12px; white-space: pre-wrap; font-size: 12px; line-height: 18px; color: var(--faint); }
 
-  button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
   @media (min-width: 900px) {
     main { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 24px; padding: 24px; }
@@ -92,7 +76,7 @@
 </head>
 <body>
 <header class="bar">
-  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.2 7.25v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="#e0b553" stroke-width="2"/><path d="M12 8 15.5 10v4L12 16l-3.5-2v-4z" fill="#e0b553"/></svg>
+  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.2 7.25v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="#ffffff" stroke-width="2"/><path d="M12 8 15.5 10v4L12 16l-3.5-2v-4z" fill="#ffffff"/></svg>
   <h1>TFT 덱 PiP</h1>
   <span class="fresh" id="fresh"></span>
   <button class="text" id="reload">새로 받기</button>
@@ -105,58 +89,18 @@
       <button class="primary" id="pip">PiP 시작</button>
       <button class="step" id="next" aria-label="다음">▶</button>
     </div>
-    <div class="seg" id="views" role="group" aria-label="화면">
-      <button data-mode="0" aria-pressed="true">요약</button>
-      <button data-mode="1" aria-pressed="false">상세</button>
-      <button data-mode="2" aria-pressed="false">아이템</button>
-      <button data-mode="3" aria-pressed="false">증강 티어</button>
-    </div>
-    <div class="auto">
-      <label for="auto">자동 넘김</label>
-      <select id="auto">
-        <option value="0">끔</option>
-        <option value="10">10초</option>
-        <option value="20">20초</option>
-        <option value="40">40초</option>
-      </select>
-    </div>
-    <p class="hint">PiP 창의 10초 앞뒤 버튼은 이전·다음 페이지, 재생 버튼은 화면 전환이에요.</p>
   </section>
   <section class="comps" aria-labelledby="comps-title">
     <h2 id="comps-title">메타 덱</h2>
-    <div class="tiers" id="tiers" role="group" aria-label="티어로 거르기"></div>
     <div id="list"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
   </section>
 </main>
 <footer>
   <div id="updated"></div>
-  <details><summary>진단 로그</summary><div id="log"></div></details>
-  <details><summary>이전 세션 로그</summary><div id="prevlog"></div></details>
 </footer>
 
 <script>
-// The log is kept in localStorage so a session that froze or was killed by
-// iOS can still be inspected after reopening the page.
-const LOG_KEY = "tftpip-log", BEAT_KEY = "tftpip-beat", EXIT_KEY = "tftpip-exit"
-const logLines = []
-function log(m) {
-  const line = `${new Date().toLocaleTimeString("ko-KR", { hour12: false })} ${m}`
-  document.getElementById("log").textContent += line + "\n"
-  logLines.push(line)
-  try { localStorage.setItem(LOG_KEY, JSON.stringify(logLines.slice(-300))) } catch {}
-}
-{
-  const prev = JSON.parse(localStorage.getItem(LOG_KEY) || "[]")
-  const beat = Number(localStorage.getItem(BEAT_KEY) || 0)
-  let note = ""
-  if (beat && !localStorage.getItem(EXIT_KEY)) {
-    note = `※ 정상 종료 기록 없음: 마지막 응답 ${new Date(beat).toLocaleTimeString("ko-KR", { hour12: false })} (iOS가 페이지를 종료했거나 멈췄을 수 있음)\n`
-  }
-  document.getElementById("prevlog").textContent = note + prev.join("\n")
-  localStorage.removeItem(EXIT_KEY)
-}
-setInterval(() => localStorage.setItem(BEAT_KEY, Date.now()), 5000)
-addEventListener("pagehide", () => { log("pagehide"); localStorage.setItem(EXIT_KEY, "1") })
+const log = (m) => console.log(m)
 window.onerror = (m, src, line) => log(`에러: ${m} (${line})`)
 window.onunhandledrejection = (e) => log(`에러: ${e.reason}`)
 const MUXER_URL = "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs"
@@ -791,26 +735,8 @@ function drawAugPage(p, k) {
   })
 }
 
-// The list can be narrowed to one tier with the count cards above it; the
-// video always holds every comp.
-let tierFilter = null
-function renderTiers() {
-  const el = document.getElementById("tiers")
-  el.innerHTML = ""
-  for (const t of ["S", "A", "B", "C"]) {
-    const n = comps.filter((c) => c.tier === t).length
-    const b = document.createElement("button")
-    b.setAttribute("aria-pressed", String(tierFilter === t))
-    b.innerHTML = `<span>${t}티어</span><strong class="num">${n}</strong>`
-    b.onclick = () => { tierFilter = tierFilter === t ? null : t; renderList() }
-    el.appendChild(b)
-  }
-}
-
 function renderList() {
-  renderTiers()
-  const shown = comps.map((c, i) => [c, i]).filter(([c]) => !tierFilter || c.tier === tierFilter)
-  document.getElementById("comps-title").textContent = `메타 덱 ${shown.length}개`
+  const shown = comps.map((c, i) => [c, i])
   listEl.innerHTML = `<div class="head"><span>덱</span><span>평균 등수</span></div>`
   for (const [c, i] of shown) {
     const el = document.createElement("button")
@@ -851,10 +777,6 @@ function show(m, k) {
   mode = m
   if (m === 3) augPage = k
   else idx = k
-  for (const b of document.querySelectorAll("#views button")) {
-    b.setAttribute("aria-pressed", String(Number(b.dataset.mode) === mode))
-    b.hidden = Number(b.dataset.mode) >= modeCount()
-  }
   if (fileMode) seekTo(segStart() + 0.5)
   else draw()
   renderList()
@@ -870,6 +792,7 @@ const cycleMode = () => { const m = (mode + 1) % modeCount(); show(m, posOf(m)) 
 let selfTarget = -1
 function seekTo(t) {
   selfTarget = t
+  lastSelfSeekAt = Date.now()
   video.currentTime = t
 }
 const isSelfSeek = () => Math.abs(video.currentTime - selfTarget) < 0.3
@@ -899,24 +822,36 @@ video.addEventListener("timeupdate", () => {
   if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5)
 })
 
-// Play/pause in PiP cycles summary → detail → items → augment tiers; the
-// video resumes right away so it never sits paused. iOS also pauses on its
-// own around seeks (our segment holds every few seconds, or a skip), which
-// used to flip the view by itself; pauses that close to a seek only resume.
-let lastToggle = 0, lastSeekAt = 0
-video.addEventListener("seeking", () => { lastSeekAt = Date.now() })
-video.addEventListener("seeked", () => { lastSeekAt = Date.now() })
+// Play/pause in PiP cycles summary → detail → items → augment tiers, and
+// the video resumes right away so it never sits paused. If that resume is
+// refused (iOS can, while the page is in the background) the video stays
+// paused and the next tap on the button arrives as "play" instead, so a
+// play we did not start ourselves toggles too. iOS also pauses by itself
+// right after our own segment-hold seeks; those pauses only resume.
+let lastToggle = 0, lastSelfSeekAt = 0, selfPlayAt = 0
+function resume() {
+  selfPlayAt = Date.now()
+  video.play().catch((e) => {
+    selfPlayAt = 0 // refused: the next play is the user's
+    log("재생 재개 실패: " + e.message)
+  })
+}
+function userToggle(kind) {
+  const now = Date.now()
+  if (now - lastSelfSeekAt < 800) return log(`${kind} 무시 (자체 탐색 직후)`)
+  if (now - lastToggle < 400) return
+  lastToggle = now
+  cycleMode()
+  log(`${kind} → ${MODE_NAMES[mode]}`)
+}
 video.addEventListener("pause", () => {
   if (!fileMode || !comps.length) return
-  const now = Date.now()
-  if (video.seeking || now - lastSeekAt < 1500) {
-    log(`pause 무시 (탐색 직후 ${now - lastSeekAt}ms)`)
-  } else if (now - lastToggle > 400) {
-    lastToggle = now
-    cycleMode()
-    log(`⏯ → ${MODE_NAMES[mode]}`)
-  }
-  video.play().catch((e) => log("재생 재개 실패: " + e.message))
+  userToggle("pause")
+  resume()
+})
+video.addEventListener("play", () => {
+  if (!fileMode || !comps.length || Date.now() - selfPlayAt < 1000) return
+  userToggle("play")
 })
 
 for (const ev of ["waiting", "stalled", "emptied", "abort"]) {
@@ -927,7 +862,7 @@ video.addEventListener("error", () => {
   if (!fileMode || !videoUrl) return
   log(`video error ${video.error?.code}: ${video.error?.message || ""} → 다시 연결`)
   video.src = videoUrl
-  video.addEventListener("loadedmetadata", () => { show(mode, posOf(mode)); video.play().catch(() => {}) }, { once: true })
+  video.addEventListener("loadedmetadata", () => { show(mode, posOf(mode)); resume() }, { once: true })
 })
 
 // Watchdog: if playback ends up paused anyway or stops advancing, nudge it.
@@ -937,7 +872,7 @@ setInterval(() => {
   if (!fileMode || (document.hidden && !pip)) return
   if (video.paused) {
     log("watchdog: 멈춤 감지 → 재생")
-    video.play().catch(() => {})
+    resume()
     return
   }
   if (video.currentTime === lastPos && !video.seeking) {
@@ -992,22 +927,12 @@ async function buildVideo() {
 
 document.getElementById("prev").onclick = () => step(-1)
 document.getElementById("next").onclick = () => step(1)
-for (const b of document.querySelectorAll("#views button")) {
-  b.onclick = () => { const m = Number(b.dataset.mode); show(m, posOf(m)) }
-}
-
-let autoTimer = null
-document.getElementById("auto").onchange = (e) => {
-  clearInterval(autoTimer)
-  const sec = Number(e.target.value)
-  if (sec) autoTimer = setInterval(() => step(1), sec * 1000)
-}
 
 // Live-stream fallback until (or unless) the MP4 is ready.
 draw()
 let streamTimer = setInterval(() => { if (!fileMode) draw() }, 500)
 video.srcObject = canvas.captureStream(10)
-video.play().catch(() => {})
+resume()
 
 // PiP must be requested synchronously inside the tap handler, while playing.
 video.addEventListener("webkitpresentationmodechanged", () => log("모드: " + video.webkitPresentationMode))
@@ -1015,7 +940,7 @@ document.addEventListener("visibilitychange", () => log(document.hidden ? "페�
 
 document.getElementById("pip").onclick = () => {
   log("PiP 버튼 눌림 (" + (fileMode ? "영상" : "스트림") + " 모드)")
-  video.play().catch((e) => log("play 실패: " + e.message))
+  resume()
   try {
     if (video.webkitSupportsPresentationMode && video.webkitSupportsPresentationMode("picture-in-picture")) {
       video.webkitSetPresentationMode("picture-in-picture")
@@ -1069,7 +994,7 @@ function startVideo(blob) {
     // pauses iOS throws in around it) then comes every ~30s, not every ~8s.
     video.defaultPlaybackRate = video.playbackRate = 0.25
     show(mode, posOf(mode))
-    video.play().catch(() => {})
+    resume()
   }, { once: true })
   log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
 }
