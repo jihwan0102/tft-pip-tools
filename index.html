@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TFT 덱 PiP</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
-  body { margin: 0; padding: 16px; background: #111; color: #eee; font: 15px -apple-system, sans-serif; }
+  body { margin: 0; padding: 16px; background: #111; color: #eee; font: 15px "Pretendard Variable", -apple-system, sans-serif; }
   video { width: 100%; border-radius: 10px; background: #000; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
   button, select { flex: 1; padding: 14px; font-size: 16px; border: 0; border-radius: 10px; background: #333; color: #fff; }
@@ -82,8 +83,9 @@ const CDRAGON_ICON = (path) => `https://raw.communitydragon.org/latest/game/${pa
 const STATS_URL = (clusterId) => "https://api-hc.metatft.com/tft-comps-api/comps_stats?queue=1100&patch=current&days=3" +
   `&rank=CHALLENGER,DIAMOND,EMERALD,GRANDMASTER,MASTER,PLATINUM&permit_filter_adjustment=true&cluster_id=${clusterId}`
 const MIN_PICK_RATE = 0.01
-const AUG_PER_PAGE = 60
-const RARITIES = [["Silver", "실버", "#d6dde6"], ["Gold", "골드", "#f7c948"], ["Prismatic", "프리즘", "#f0c8ff"]]
+const AUG_COLS = 9, AUG_ROWS = 6
+// Augment art is recoloured to its rarity; prismatic gets a rainbow sweep.
+const RARITIES = [["Silver", "실버", "#d6dde6"], ["Gold", "골드", "#f7c948"], ["Prismatic", "프리즘", "prism"]]
 const ARTIFACT_COLOR = "#f59e0b"
 const COST_COLORS = { 1: "#9aa4af", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7", 5: "#f5b301" }
 const TIER_COLORS = { S: "#ff7a7a", A: "#ffb86b", B: "#ffe66b", C: "#9be08f", D: "#8ab4ff" }
@@ -107,24 +109,42 @@ function loadImage(url) {
 }
 const imageOf = (url) => images[url]?.img
 
-// MetaTFT's glyphs are pink strokes inside a blue glow; the red channel
-// picks out the strokes, which are mapped onto a single colour.
-function tintImage(img, color) {
+// Recolours augment art to one colour (or the prismatic rainbow) by the
+// brightness of each pixel. MetaTFT's glyphs are pink strokes
+// in a blue glow, so for those only the red channel counts, which drops the glow.
+function tintImage(img, color, glyph) {
   const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height })
   const x = c.getContext("2d")
   x.drawImage(img, 0, 0)
   const d = x.getImageData(0, 0, c.width, c.height)
-  const [r, g, b] = [1, 3, 5].map((k) => parseInt(color.slice(k, k + 2), 16))
+  const rgb = color === "prism" ? null : [1, 3, 5].map((k) => parseInt(color.slice(k, k + 2), 16))
   for (let k = 0; k < d.data.length; k += 4) {
-    const l = (d.data[k] / 255) ** 1.5
-    d.data[k] = r * l
-    d.data[k + 1] = g * l
-    d.data[k + 2] = b * l
+    const p = d.data
+    const v = glyph ? (p[k] / 255) ** 1.5 : Math.max(p[k], p[k + 1], p[k + 2]) / 255
+    // Near-black backdrops some icons ship with fade out instead of
+    // showing as dark squares.
+    const l = Math.max(0, (v - 0.08) / 0.92)
+    p[k + 3] *= Math.min(1, l * 4)
+    let [r, g, b] = rgb || prismAt((k / 4) % c.width / c.width, Math.floor(k / 4 / c.width) / c.height)
+    p[k] = r * l
+    p[k + 1] = g * l
+    p[k + 2] = b * l
   }
   x.putImageData(d, 0, 0)
   return c
 }
 
+// Pastel hue sweep across the icon diagonal.
+function prismAt(u, v) {
+  const h = ((u + v) / 2) * 300 + 170
+  const f = (n) => {
+    const k = (n + h / 30) % 12
+    return 255 * (0.78 - 0.22 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))
+  }
+  return [f(0), f(8), f(4)]
+}
+
+const FONT = '"Pretendard Variable", -apple-system, sans-serif'
 const W = 960, H = 540
 const canvas = Object.assign(document.createElement("canvas"), { width: W, height: H })
 const ctx = canvas.getContext("2d")
@@ -251,7 +271,9 @@ function buildComps(raw, stats, lk, buildsById) {
     })
 }
 
-// The site's tier list, S and A only, split by augment rarity into pages.
+// The site's tier list, S and A only, by augment rarity. "+"/"++" variants
+// are the same augment and collapse into the first (best tiered) one. Each
+// tier starts its own rows; pages hold AUG_ROWS rows.
 function buildAugPages(tierList, lk, augIcons) {
   const tiers = tierList?.content?.content?.tierList
   if (!tiers) return []
@@ -259,17 +281,22 @@ function buildAugPages(tierList, lk, augIcons) {
   for (const a of lk.augments || []) augByApi[a.apiName] = a
   const pages = []
   for (const [rarity, label, tint] of RARITIES) {
-    const list = tiers
-      .filter((t) => t.label === "S" || t.label === "A")
-      .flatMap((t) => t.content.map((x) => ({ d: augByApi[x.id], tier: t.label })))
-      .filter(({ d }) => d?.rarity === rarity)
-      .map(({ d, tier }) => {
-        if (augIcons[d.apiName]) return { name: d.name, tier, icon: CDRAGON_ICON(augIcons[d.apiName]) }
-        // No in-game art: recolour MetaTFT's purple glyph to the rarity.
-        const src = ICON("augments", d.apiName)
-        return { name: d.name, tier, src, tint, icon: `${src}#${tint}` }
-      })
-    for (let k = 0; k < list.length; k += AUG_PER_PAGE) pages.push({ label, augs: list.slice(k, k + AUG_PER_PAGE) })
+    const seen = new Set()
+    const rows = []
+    for (const t of tiers.filter((t) => t.label === "S" || t.label === "A")) {
+      const augs = t.content
+        .map((x) => augByApi[x.id])
+        .filter((d) => d?.rarity === rarity)
+        .map((d) => ({ d, name: d.name.replace(/\+*$/, "") }))
+        .filter(({ name }) => !seen.has(name) && seen.add(name))
+        .map(({ d, name }) => {
+          const art = augIcons[d.apiName]
+          const src = art ? CDRAGON_ICON(art) : ICON("augments", d.apiName)
+          return { name, src, tint, glyph: !art, icon: `${src}#${tint}` }
+        })
+      for (let k = 0; k < augs.length; k += AUG_COLS) rows.push({ tier: t.label, first: k === 0, augs: augs.slice(k, k + AUG_COLS) })
+    }
+    for (let k = 0; k < rows.length; k += AUG_ROWS) pages.push({ label, rows: rows.slice(k, k + AUG_ROWS) })
   }
   return pages
 }
@@ -309,8 +336,10 @@ function placeBoard(positions, units) {
 }
 
 function drawIcon(url, label, x, y, size, border) {
-  ctx.fillStyle = border
-  ctx.fillRect(x - 3, y - 3, size + 6, size + 6)
+  if (border) {
+    ctx.fillStyle = border
+    ctx.fillRect(x - 3, y - 3, size + 6, size + 6)
+  }
   const img = imageOf(url)
   if (img) {
     ctx.drawImage(img, x, y, size, size)
@@ -318,7 +347,7 @@ function drawIcon(url, label, x, y, size, border) {
     ctx.fillStyle = "#222"
     ctx.fillRect(x, y, size, size)
     ctx.fillStyle = "#fff"
-    ctx.font = "bold 16px -apple-system, sans-serif"
+    ctx.font = `bold 16px ${FONT}`
     ctx.textAlign = "center"
     ctx.fillText(label.slice(0, 4), x + size / 2, y + size / 2 - 8, size - 4)
     ctx.textAlign = "left"
@@ -328,7 +357,7 @@ function drawIcon(url, label, x, y, size, border) {
 function drawUnit(u, x, y, size) {
   drawIcon(u.icon, u.name, x, y, size, COST_COLORS[u.cost] || "#666")
   if (!u.three) return
-  ctx.font = `bold ${Math.round(size * 0.3)}px -apple-system, sans-serif`
+  ctx.font = `bold ${Math.round(size * 0.3)}px ${FONT}`
   ctx.textAlign = "center"
   ctx.lineWidth = 4
   ctx.strokeStyle = "#000"
@@ -343,15 +372,15 @@ function drawHeader(c, i, sub) {
   ctx.fillStyle = TIER_COLORS[c.tier]
   ctx.fillRect(30, 28, 64, 64)
   ctx.fillStyle = "#000"
-  ctx.font = "bold 46px -apple-system, sans-serif"
+  ctx.font = `bold 46px ${FONT}`
   ctx.textAlign = "center"
   ctx.fillText(c.tier, 62, 36)
   ctx.textAlign = "left"
   ctx.fillStyle = "#fff"
-  ctx.font = "bold 46px -apple-system, sans-serif"
+  ctx.font = `bold 46px ${FONT}`
   ctx.fillText(`${i + 1}. ${c.title}`, 112, 32, W - 140)
   ctx.fillStyle = "#aaa"
-  ctx.font = "26px -apple-system, sans-serif"
+  ctx.font = `26px ${FONT}`
   ctx.fillText(sub, 112, 86)
 }
 
@@ -364,7 +393,7 @@ function draw(m = mode, i = posOf(m)) {
   const c = comps[i]
   if (!c) {
     ctx.fillStyle = "#fff"
-    ctx.font = "40px -apple-system, sans-serif"
+    ctx.font = `40px ${FONT}`
     ctx.fillText("불러오는 중...", 40, 40)
     return
   }
@@ -391,7 +420,7 @@ function draw(m = mode, i = posOf(m)) {
 
   // Traits
   ctx.fillStyle = "#8ab4ff"
-  ctx.font = "24px -apple-system, sans-serif"
+  ctx.font = `24px ${FONT}`
   ctx.fillText(c.traits.join("  "), 30, H - 50, W - 60)
   ctx.fillStyle = "#555"
   ctx.textAlign = "right"
@@ -433,7 +462,7 @@ function drawBoard(board, x0, y0, r) {
       ctx.restore()
     } else {
       ctx.fillStyle = "#fff"
-      ctx.font = "bold 15px -apple-system, sans-serif"
+      ctx.font = `bold 15px ${FONT}`
       ctx.textAlign = "center"
       ctx.fillText(u.name.slice(0, 3), cx, cy - 8, 2 * r - 8)
       ctx.textAlign = "left"
@@ -443,7 +472,7 @@ function drawBoard(board, x0, y0, r) {
     ctx.lineWidth = 4
     ctx.stroke()
     if (u.three) {
-      ctx.font = "bold 16px -apple-system, sans-serif"
+      ctx.font = `bold 16px ${FONT}`
       ctx.textAlign = "center"
       ctx.lineWidth = 3
       ctx.strokeStyle = "#000"
@@ -455,14 +484,14 @@ function drawBoard(board, x0, y0, r) {
   }
   if (!board) {
     ctx.fillStyle = "#888"
-    ctx.font = "24px -apple-system, sans-serif"
+    ctx.font = `24px ${FONT}`
     ctx.fillText("배치 데이터 없음", x0 + hexW * 2.2, y0 + r * 2.4)
   }
 }
 
 function drawBuildRow(label, build, x, y) {
   ctx.fillStyle = "#999"
-  ctx.font = "20px -apple-system, sans-serif"
+  ctx.font = `20px ${FONT}`
   ctx.fillText(label, x, y + 12)
   if (!build) {
     ctx.fillStyle = "#555"
@@ -487,29 +516,41 @@ function drawDetail(c, i) {
     drawBuildRow("유물", k.art, 600, y + 62)
   })
   ctx.fillStyle = "#555"
-  ctx.font = "24px -apple-system, sans-serif"
+  ctx.font = `24px ${FONT}`
   ctx.textAlign = "right"
   ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 36)
   ctx.textAlign = "left"
 }
 
-// Third view: augment tier list page, red border S, orange A.
+// Third view: augment tier list page, one tier per block of rows.
 function drawAugPage(p, k) {
   ctx.fillStyle = "#fff"
-  ctx.font = "bold 46px -apple-system, sans-serif"
+  ctx.font = `bold 46px ${FONT}`
   ctx.fillText(`증강 티어 · ${p.label}`, 30, 26)
   ctx.fillStyle = "#aaa"
-  ctx.font = "24px -apple-system, sans-serif"
-  ctx.fillText(`빨강 S · 주황 A   ${k + 1}/${augPages.length}`, 30, 80)
-  const cols = 10, cellW = (W - 60) / cols, rowH = 69
-  p.augs.forEach((a, n) => {
-    const x = 30 + (n % cols) * cellW, y = 120 + Math.floor(n / cols) * rowH
-    drawIcon(a.icon, a.name, x + (cellW - 44) / 2, y, 44, TIER_COLORS[a.tier])
-    ctx.fillStyle = "#ddd"
-    ctx.font = "15px -apple-system, sans-serif"
-    ctx.textAlign = "center"
-    ctx.fillText(a.name, x + cellW / 2, y + 50, cellW - 4)
-    ctx.textAlign = "left"
+  ctx.font = `24px ${FONT}`
+  ctx.fillText(`${k + 1}/${augPages.length}`, 30, 80)
+  const x0 = 80, cellW = (W - x0 - 20) / AUG_COLS, rowH = 68
+  p.rows.forEach((row, r) => {
+    const y = 118 + r * rowH
+    if (row.first || r === 0) {
+      ctx.fillStyle = TIER_COLORS[row.tier]
+      ctx.font = `800 36px ${FONT}`
+      ctx.fillText(row.tier, 34, y + 4)
+      if (r > 0) {
+        ctx.fillStyle = "#2a2a33"
+        ctx.fillRect(30, y - 6, W - 60, 2)
+      }
+    }
+    row.augs.forEach((a, n) => {
+      const x = x0 + n * cellW
+      drawIcon(a.icon, a.name, x + (cellW - 46) / 2, y, 46, null)
+      ctx.fillStyle = "#ddd"
+      ctx.font = `500 15px ${FONT}`
+      ctx.textAlign = "center"
+      ctx.fillText(a.name, x + cellW / 2, y + 48, cellW - 4)
+      ctx.textAlign = "left"
+    })
   })
 }
 
@@ -751,13 +792,22 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
         ...c.units.map((u) => u.icon),
         ...c.carries.flatMap((k) => [k.icon, ...[k.items, k.alt?.items, k.art?.items].flat().filter(Boolean).map((it) => it.icon)]),
       ]),
-      ...augPages.flatMap((p) => p.augs.map((a) => a.src || a.icon)),
+      ...augPages.flatMap((p) => p.rows.flatMap((r) => r.augs.map((a) => a.src))),
     ])
     const loaded = await Promise.all([...urls].map(loadImage))
-    for (const a of augPages.flatMap((p) => p.augs)) {
-      const img = a.tint && imageOf(a.src)
-      if (img) images[a.icon] = { img: tintImage(img, a.tint) }
+    for (const a of augPages.flatMap((p) => p.rows.flatMap((r) => r.augs))) {
+      const img = imageOf(a.src)
+      if (img) images[a.icon] = { img: tintImage(img, a.tint, a.glyph) }
     }
+    // Canvas text only uses a web font once it has loaded, and the font
+    // ships in subsets, so load the ones covering every string drawn.
+    const text = [
+      "불러오는 중상세평균등레벨리롤빠른차선유물없음배치데이터증강티어실버골드프리즘SABCD0123456789./·★",
+      ...comps.flatMap((c) => [c.title, ...c.units.map((u) => u.name), ...c.traits]),
+      ...augPages.flatMap((p) => p.rows.flatMap((r) => r.augs.map((a) => a.name))),
+    ].join("")
+    await Promise.all(["500", "bold", "800"].map((w) => document.fonts.load(`${w} 24px "Pretendard Variable"`, text)))
+      .catch((e) => log("글꼴 실패: " + e.message))
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
     draw()
     try {
