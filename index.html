@@ -792,6 +792,7 @@ const cycleMode = () => { const m = (mode + 1) % modeCount(); show(m, posOf(m)) 
 let selfTarget = -1
 function seekTo(t, hold = false) {
   selfTarget = t
+  lastTime = t
   if (hold) lastHoldSeekAt = Date.now()
   video.currentTime = t
 }
@@ -799,25 +800,23 @@ const isSelfSeek = () => Math.abs(video.currentTime - selfTarget) < 0.3
 
 // The video keeps playing so PiP always repaints (a paused PiP ignores seeks
 // visually); playback is held inside the current segment instead.
+// A PiP skip is read as a direction from where the video last was, never
+// as an absolute time: iOS can reload the video in the background and reset
+// it to 0s, and a skip from there used to land on comp 1. A jump that is no
+// skip (a reset, a resume from elsewhere) puts the current page back.
+let lastTime = 0
 video.addEventListener("seeking", () => {
   if (!fileMode || !comps.length || isSelfSeek()) return
-  const s = Math.min(Math.max(Math.floor(video.currentTime / SEG), 0), trackStart(modeCount()) - 1)
-  let m = 0
-  while (m < modeCount() - 1 && s >= trackStart(m + 1)) m++
-  const j = s - trackStart(m)
-  const k = trackPages(m)[j]
-  const copy = j === 0 || j === trackLen(m) + 1
-  log(`skip → ${video.currentTime.toFixed(1)}s (${MODE_NAMES[m]} ${k + 1}${copy ? " 복사본" : ""})`)
-  // Only rapid repeated skips get this far; wrap within the current view.
-  if (m !== mode) return show(mode, m > mode ? 0 : trackLen(mode) - 1)
-  if (copy) return show(mode, k)
-  if (k !== posOf(mode)) {
-    if (mode === 3) augPage = k
-    else { idx = k; renderList() }
-  }
+  // Still inside our page (iOS may snap our own seek to the keyframe).
+  if (Math.floor(video.currentTime / SEG) === Math.floor(segStart() / SEG)) return
+  const delta = video.currentTime - lastTime
+  log(`skip ${lastTime.toFixed(1)}s → ${video.currentTime.toFixed(1)}s`)
+  if (Math.abs(delta) > 3 && Math.abs(delta) < 30) step(Math.sign(delta))
+  else show(mode, posOf(mode))
 })
 video.addEventListener("timeupdate", () => {
   if (!fileMode || video.seeking) return
+  lastTime = video.currentTime
   const t0 = segStart()
   if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5, true)
 })
@@ -864,7 +863,6 @@ video.addEventListener("error", () => {
   if (!fileMode || !videoUrl) return
   log(`video error ${video.error?.code}: ${video.error?.message || ""} → 다시 연결`)
   video.src = videoUrl
-  video.addEventListener("loadedmetadata", () => { show(mode, posOf(mode)); resume() }, { once: true })
 })
 
 // Watchdog: if playback ends up paused anyway or stops advancing, nudge it.
@@ -991,13 +989,15 @@ function startVideo(blob) {
   video.loop = true
   video.src = videoUrl
   fileMode = true
+  // Also after any later reload of the media (decoder error, or iOS
+  // reloading it in the background), which starts again from 0s.
   video.addEventListener("loadedmetadata", () => {
     // Slow playback: the picture is still, and the segment hold (with the
     // pauses iOS throws in around it) then comes every ~30s, not every ~8s.
     video.defaultPlaybackRate = video.playbackRate = 0.25
     show(mode, posOf(mode))
     resume()
-  }, { once: true })
+  })
   log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
 }
 
