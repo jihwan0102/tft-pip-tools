@@ -76,11 +76,14 @@ const LOOKUP_URL = (set) => `https://data.metatft.com/lookups/${set}_latest_ko_k
 const BUILDS_URL = (clusterId) => `https://api-hc.metatft.com/tft-comps-api/comp_builds?cluster_id=${clusterId}`
 const DETAILS_URL = (comp, clusterId) => `https://api-hc.metatft.com/tft-comps-api/comp_details?comp=${comp}&cluster_id=${clusterId}`
 const AUG_TIERLIST_URL = "https://api-hc.metatft.com/tft-stat-api/augments_tiers"
+// In-game augment art with rarity colouring, mapped by scripts/update-augment-icons.py.
+const AUG_ICONS_URL = "augment-icons.json"
+const CDRAGON_ICON = (path) => `https://raw.communitydragon.org/latest/game/${path}.png`
 const STATS_URL = (clusterId) => "https://api-hc.metatft.com/tft-comps-api/comps_stats?queue=1100&patch=current&days=3" +
   `&rank=CHALLENGER,DIAMOND,EMERALD,GRANDMASTER,MASTER,PLATINUM&permit_filter_adjustment=true&cluster_id=${clusterId}`
 const MIN_PICK_RATE = 0.01
 const AUG_PER_PAGE = 60
-const RARITIES = [["Silver", "실버"], ["Gold", "골드"], ["Prismatic", "프리즘"]]
+const RARITIES = [["Silver", "실버", "#d6dde6"], ["Gold", "골드", "#f7c948"], ["Prismatic", "프리즘", "#f0c8ff"]]
 const ARTIFACT_COLOR = "#f59e0b"
 const COST_COLORS = { 1: "#9aa4af", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7", 5: "#f5b301" }
 const TIER_COLORS = { S: "#ff7a7a", A: "#ffb86b", B: "#ffe66b", C: "#9be08f", D: "#8ab4ff" }
@@ -103,6 +106,24 @@ function loadImage(url) {
   return images[url]
 }
 const imageOf = (url) => images[url]?.img
+
+// MetaTFT's glyphs are pink strokes inside a blue glow; the red channel
+// picks out the strokes, which are mapped onto a single colour.
+function tintImage(img, color) {
+  const c = Object.assign(document.createElement("canvas"), { width: img.width, height: img.height })
+  const x = c.getContext("2d")
+  x.drawImage(img, 0, 0)
+  const d = x.getImageData(0, 0, c.width, c.height)
+  const [r, g, b] = [1, 3, 5].map((k) => parseInt(color.slice(k, k + 2), 16))
+  for (let k = 0; k < d.data.length; k += 4) {
+    const l = (d.data[k] / 255) ** 1.5
+    d.data[k] = r * l
+    d.data[k + 1] = g * l
+    d.data[k + 2] = b * l
+  }
+  x.putImageData(d, 0, 0)
+  return c
+}
 
 const W = 960, H = 540
 const canvas = Object.assign(document.createElement("canvas"), { width: W, height: H })
@@ -231,18 +252,23 @@ function buildComps(raw, stats, lk, buildsById) {
 }
 
 // The site's tier list, S and A only, split by augment rarity into pages.
-function buildAugPages(tierList, lk) {
+function buildAugPages(tierList, lk, augIcons) {
   const tiers = tierList?.content?.content?.tierList
   if (!tiers) return []
   const augByApi = {}
   for (const a of lk.augments || []) augByApi[a.apiName] = a
   const pages = []
-  for (const [rarity, label] of RARITIES) {
+  for (const [rarity, label, tint] of RARITIES) {
     const list = tiers
       .filter((t) => t.label === "S" || t.label === "A")
       .flatMap((t) => t.content.map((x) => ({ d: augByApi[x.id], tier: t.label })))
       .filter(({ d }) => d?.rarity === rarity)
-      .map(({ d, tier }) => ({ name: d.name, tier, icon: ICON("augments", d.apiName) }))
+      .map(({ d, tier }) => {
+        if (augIcons[d.apiName]) return { name: d.name, tier, icon: CDRAGON_ICON(augIcons[d.apiName]) }
+        // No in-game art: recolour MetaTFT's purple glyph to the rarity.
+        const src = ICON("augments", d.apiName)
+        return { name: d.name, tier, src, tint, icon: `${src}#${tint}` }
+      })
     for (let k = 0; k < list.length; k += AUG_PER_PAGE) pages.push({ label, augs: list.slice(k, k + AUG_PER_PAGE) })
   }
   return pages
@@ -695,7 +721,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
   try {
     const raw = await (await fetch(COMPS_URL, { cache: "no-store" })).json()
     const set = raw.results.data.tft_set || raw.tft_set
-    const [lk, stats, builds, tierList] = await Promise.all([
+    const [lk, stats, builds, tierList, augIcons] = await Promise.all([
       fetch(LOOKUP_URL(set)).then((r) => r.json()),
       fetch(STATS_URL(raw.cluster_id), { cache: "no-store" }).then((r) => r.json()),
       // The rest is optional; a failure only leaves those parts empty.
@@ -703,9 +729,16 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
         .then((d) => d.results || {}).catch((e) => { log("아이템 통계 실패: " + e.message); return {} }),
       fetch(AUG_TIERLIST_URL, { cache: "no-store" }).then((r) => r.json())
         .catch((e) => { log("증강 티어 실패: " + e.message); return null }),
+      fetch(AUG_ICONS_URL).then((r) => r.json())
+        .then((d) => {
+          if (d.set === set) return d.icons
+          log(`증강 아이콘 목록이 ${d.set}용이라 기본 아이콘 사용`)
+          return {}
+        })
+        .catch(() => ({})),
     ])
     comps = buildComps(raw, stats, lk, builds)
-    augPages = tierList?.tft_set && tierList.tft_set !== set ? [] : buildAugPages(tierList, lk)
+    augPages = tierList?.tft_set && tierList.tft_set !== set ? [] : buildAugPages(tierList, lk, augIcons)
     log(`${set} · 덱 ${comps.length}개 · 증강 티어 ${augPages.length}쪽 · 갱신 ${new Date(stats.updated).toLocaleString("ko-KR")}`)
     document.getElementById("updated").textContent =
       `MetaTFT 데이터 ${new Date(stats.updated).toLocaleString("ko-KR")} · 하루마다 자동 새로고침`
@@ -718,9 +751,13 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
         ...c.units.map((u) => u.icon),
         ...c.carries.flatMap((k) => [k.icon, ...[k.items, k.alt?.items, k.art?.items].flat().filter(Boolean).map((it) => it.icon)]),
       ]),
-      ...augPages.flatMap((p) => p.augs.map((a) => a.icon)),
+      ...augPages.flatMap((p) => p.augs.map((a) => a.src || a.icon)),
     ])
     const loaded = await Promise.all([...urls].map(loadImage))
+    for (const a of augPages.flatMap((p) => p.augs)) {
+      const img = a.tint && imageOf(a.src)
+      if (img) images[a.icon] = { img: tintImage(img, a.tint) }
+    }
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
     draw()
     try {
