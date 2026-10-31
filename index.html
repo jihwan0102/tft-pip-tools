@@ -4,44 +4,135 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TFT 덱 PiP</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap">
 <style>
-  body { margin: 0; padding: 16px; background: #111; color: #eee; font: 15px "Nanum Gothic", -apple-system, sans-serif; }
-  video { width: 100%; border-radius: 10px; background: #000; }
-  .row { display: flex; gap: 8px; margin-top: 10px; }
-  button, select { flex: 1; padding: 14px; font-size: 16px; border: 0; border-radius: 10px; background: #333; color: #fff; }
-  button.primary { background: #0a84ff; }
-  #list { margin-top: 12px; }
-  .comp { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; margin-bottom: 4px; background: #1c1c1e; }
-  .comp.sel { outline: 2px solid #0a84ff; }
-  .tier { width: 28px; text-align: center; font-weight: 700; border-radius: 6px; padding: 2px 0; color: #000; }
-  .name { flex: 1; }
-  .avg { color: #999; font-size: 13px; }
-  #log, #prevlog { margin-top: 10px; font: 11px ui-monospace, monospace; color: #777; white-space: pre-wrap; }
-  details { margin-top: 10px; color: #777; font-size: 13px; }
+  /* Full self-hosted files: Google's per-range subsets sometimes left
+     glyphs missing from text drawn into the canvas on iOS. */
+  @font-face { font-family: "Nanum Gothic"; font-weight: 400; src: url(fonts/NanumGothic-Regular.woff2) format("woff2"); }
+  @font-face { font-family: "Nanum Gothic"; font-weight: 700; src: url(fonts/NanumGothic-Bold.woff2) format("woff2"); }
+  @font-face { font-family: "Nanum Gothic"; font-weight: 800; src: url(fonts/NanumGothic-ExtraBold.woff2) format("woff2"); }
+</style>
+<style>
+  /* true-black-flat: elevation by lightness alone, colour only on data
+     (the TFT gold), the primary action an inverted white pill. */
+  :root {
+    --ground: #000000; --surface: #111111; --raised: #2a2a2a; --rule: #1a1a1a;
+    --control: #444444; --text: #ffffff; --muted: #b4b4b4; --faint: #949494;
+    --accent: #e0b553; --accent-tint: #2a2312;
+    --radius-card: 20px; --radius-control: 999px;
+    --gap: 14px; --pad: 16px; --control-height: 44px;
+    --font: "Nanum Gothic", -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--ground); color-scheme: dark; }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 14px/20px var(--font); -webkit-text-size-adjust: 100%; }
+  button, select { font: inherit; color: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .bar { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 var(--pad); padding-top: env(safe-area-inset-top); box-sizing: content-box; border-bottom: 1px solid var(--rule); }
+  .bar h1 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 700; flex: 1; }
+  .bar .mark { width: 24px; height: 24px; flex: none; }
+  .bar .fresh { color: var(--faint); font-size: 12px; }
+  .text { background: none; border: 0; padding: 0 2px; min-height: 44px; color: var(--text); font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--control); }
+
+  main { display: grid; gap: var(--gap); padding: var(--pad); max-width: 1180px; margin: 0 auto; }
+  .player { display: grid; gap: var(--gap); align-content: start; }
+  .screen { background: var(--surface); border-radius: var(--radius-card); padding: 8px; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; background: var(--ground); }
+
+  .controls { display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; }
+  .controls button { height: 52px; border-radius: var(--radius-control); border: 0; cursor: pointer; }
+  .step { background: var(--surface); font-size: 18px; }
+  .primary { background: #fff; color: #000; font-weight: 800; font-size: 16px; }
+  .step:active, .seg button:active, .row:active { background: var(--raised); }
+  .primary:active { background: #d9d9d9; }
+
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--surface); border-radius: var(--radius-control); }
+  .seg button { height: 40px; border: 0; border-radius: var(--radius-control); background: none; color: var(--muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--raised); color: var(--text); font-weight: 700; }
+  .seg button[hidden] { display: none; }
+
+  .auto { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 0 8px 0 20px; background: var(--surface); border-radius: var(--radius-card); }
+  .auto label { color: var(--muted); }
+  .auto select { height: 36px; padding: 0 14px; border: 1px solid var(--control); border-radius: var(--radius-control); background: var(--ground); }
+  .hint { margin: 0; padding: 0 4px; color: var(--muted); font-size: 13px; line-height: 20px; }
+
+  .comps { display: grid; gap: var(--gap); align-content: start; }
+  .comps h2 { margin: 4px 4px 0; font-size: 16px; line-height: 24px; font-weight: 700; }
+  .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tiers button { display: grid; gap: 2px; justify-items: start; padding: 10px 12px; min-height: 61px; border: 1.5px solid transparent; border-radius: 16px; background: var(--surface); cursor: pointer; text-align: left; }
+  .tiers button span { color: var(--muted); font-size: 13px; }
+  .tiers button strong { font-size: 16px; }
+  .tiers button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); }
+
+  #list { display: grid; background: var(--surface); border-radius: var(--radius-card); padding: 6px; }
+  .row { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 12px; min-height: 60px; padding: 8px 14px 8px 10px; border: 0; border-radius: 14px; background: none; text-align: left; cursor: pointer; }
+  .row[aria-current="true"] { background: var(--raised); }
+  .tier { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; font-weight: 800; }
+  .row .name { display: grid; min-width: 0; }
+  .row .name b { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .name small { color: var(--faint); font-size: 12px; line-height: 18px; }
+  .row .avg { color: var(--text); font-size: 15px; text-align: right; }
+  #list .head { display: flex; justify-content: space-between; padding: 8px 14px 4px 54px; color: var(--faint); font-size: 12px; }
+  .state { margin: 0; padding: 16px; color: var(--muted); }
+  .skeleton { height: 60px; margin: 2px 0; border-radius: 14px; background: #161616; }
+
+  footer { padding: 8px var(--pad) 32px; max-width: 1180px; margin: 0 auto; color: var(--faint); font-size: 12px; }
+  footer details { margin-top: 8px; }
+  footer summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--muted); }
+  #log, #prevlog { margin: 0 0 12px; white-space: pre-wrap; font-size: 12px; line-height: 18px; color: var(--faint); }
+
+  button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  @media (min-width: 900px) {
+    main { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 24px; padding: 24px; }
+    .player { position: sticky; top: 24px; }
+    .bar, footer { padding-left: 24px; padding-right: 24px; }
+  }
 </style>
 </head>
 <body>
-<video id="video" muted playsinline></video>
-<div class="row">
-  <button id="prev">◀</button>
-  <button id="pip" class="primary">PiP 시작</button>
-  <button id="next">▶</button>
-</div>
-<div class="row">
-  <button id="detail">화면: 요약</button>
-  <button id="reload">새로 받기</button>
-  <select id="auto">
-    <option value="0">자동 넘김 끔</option>
-    <option value="10">10초마다 넘김</option>
-    <option value="20">20초마다 넘김</option>
-    <option value="40">40초마다 넘김</option>
-  </select>
-</div>
-<div id="updated" class="avg"></div>
-<div id="list">불러오는 중...</div>
-<div id="log"></div>
-<details><summary>이전 세션 로그</summary><div id="prevlog"></div></details>
+<header class="bar">
+  <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.2 7.25v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="#e0b553" stroke-width="2"/><path d="M12 8 15.5 10v4L12 16l-3.5-2v-4z" fill="#e0b553"/></svg>
+  <h1>TFT 덱 PiP</h1>
+  <span class="fresh" id="fresh"></span>
+  <button class="text" id="reload">새로 받기</button>
+</header>
+<main>
+  <section class="player" aria-label="PiP 화면">
+    <div class="screen"><video id="video" muted playsinline></video></div>
+    <div class="controls">
+      <button class="step" id="prev" aria-label="이전">◀</button>
+      <button class="primary" id="pip">PiP 시작</button>
+      <button class="step" id="next" aria-label="다음">▶</button>
+    </div>
+    <div class="seg" id="views" role="group" aria-label="화면">
+      <button data-mode="0" aria-pressed="true">요약</button>
+      <button data-mode="1" aria-pressed="false">상세</button>
+      <button data-mode="2" aria-pressed="false">아이템</button>
+      <button data-mode="3" aria-pressed="false">증강 티어</button>
+    </div>
+    <div class="auto">
+      <label for="auto">자동 넘김</label>
+      <select id="auto">
+        <option value="0">끔</option>
+        <option value="10">10초</option>
+        <option value="20">20초</option>
+        <option value="40">40초</option>
+      </select>
+    </div>
+    <p class="hint">PiP 창의 10초 앞뒤 버튼은 이전·다음 페이지, 재생 버튼은 화면 전환이에요.</p>
+  </section>
+  <section class="comps" aria-labelledby="comps-title">
+    <h2 id="comps-title">메타 덱</h2>
+    <div class="tiers" id="tiers" role="group" aria-label="티어로 거르기"></div>
+    <div id="list"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  </section>
+</main>
+<footer>
+  <div id="updated"></div>
+  <details><summary>진단 로그</summary><div id="log"></div></details>
+  <details><summary>이전 세션 로그</summary><div id="prevlog"></div></details>
+</footer>
 
 <script>
 // The log is kept in localStorage so a session that froze or was killed by
@@ -87,9 +178,24 @@ const MIN_PICK_RATE = 0.01
 const AUG_COLS = 9, AUG_ROWS = 6
 // Augment art is recoloured to its rarity; prismatic gets a rainbow sweep.
 const RARITIES = [["Silver", "실버", "#d6dde6"], ["Gold", "골드", "#f7c948"], ["Prismatic", "프리즘", "prism"]]
-const ARTIFACT_COLOR = "#f59e0b"
-const COST_COLORS = { 1: "#9aa4af", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7", 5: "#f5b301" }
-const TIER_COLORS = { S: "#ff7a7a", A: "#ffb86b", B: "#ffe66b", C: "#9be08f", D: "#8ab4ff" }
+// One data hue (TFT gold) on true black; everything else is a grey step.
+// Mirrors the CSS tokens of the control page.
+const C = {
+  ground: "#000000", surface: "#111111", raised: "#2a2a2a",
+  text: "#ffffff", muted: "#b4b4b4", faint: "#949494",
+  accent: "#e0b553", negative: "#e5484d",
+}
+const ARTIFACT_COLOR = C.accent
+// The game's own unit cost colours; players read them at a glance.
+const COST_COLORS = { 1: "#8c8c8c", 2: "#11b288", 3: "#207ac7", 4: "#c440da", 5: "#ffb93b" } // taste-skill-ignore: game data encoding
+// Tiers by lightness rather than a hue each: gold, white, then two greys.
+const TIER_STYLE = {
+  S: { bg: "#e0b553", fg: "#000000" },
+  A: { bg: "#e6e6e6", fg: "#000000" },
+  B: { bg: "#4a4a4a", fg: "#ffffff" },
+  C: { bg: "#2a2a2a", fg: "#b4b4b4" },
+  D: { bg: "#1a1a1a", fg: "#949494" },
+}
 const ICON = (kind, name) =>
   `https://cdn.metatft.com/cdn-cgi/image/width=96,height=96,format=png/https://cdn.metatft.com/file/metatft/${kind}/${name.toLowerCase()}.png`
 
@@ -412,17 +518,23 @@ function drawUnit(u, x, y, size) {
   ctx.textAlign = "center"
   ctx.lineWidth = 4
   ctx.strokeStyle = "#000"
-  ctx.strokeText("★★★", x + size / 2, y - size * 0.32)
-  ctx.fillStyle = "#ffd700"
-  ctx.fillText("★★★", x + size / 2, y - size * 0.32)
+  ctx.strokeText("★★★", x + size / 2, y - size * 0.32) // taste-skill-ignore: the game's star level
+  ctx.fillStyle = C.accent
+  ctx.fillText("★★★", x + size / 2, y - size * 0.32) // taste-skill-ignore: the game's star level
   ctx.textAlign = "left"
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, r)
 }
 
 // Header: tier badge, rank, title
 function drawHeader(c, i, sub) {
-  ctx.fillStyle = TIER_COLORS[c.tier]
-  ctx.fillRect(30, 28, 64, 64)
-  ctx.fillStyle = "#000"
+  ctx.fillStyle = TIER_STYLE[c.tier].bg
+  roundRect(30, 28, 64, 64, 14)
+  ctx.fill()
+  ctx.fillStyle = TIER_STYLE[c.tier].fg
   ctx.font = `bold 46px ${FONT}`
   ctx.textAlign = "center"
   ctx.fillText(c.tier, 62, 36)
@@ -430,13 +542,13 @@ function drawHeader(c, i, sub) {
   ctx.fillStyle = "#fff"
   ctx.font = `bold 46px ${FONT}`
   ctx.fillText(`${i + 1}. ${c.title}`, 112, 32, W - 140)
-  ctx.fillStyle = "#aaa"
+  ctx.fillStyle = C.muted
   ctx.font = `26px ${FONT}`
   ctx.fillText(sub, 112, 86)
 }
 
 function draw(m = mode, i = posOf(m)) {
-  ctx.fillStyle = "#0b0b0f"
+  ctx.fillStyle = C.ground
   ctx.fillRect(0, 0, W, H)
   ctx.textBaseline = "top"
   ctx.textAlign = "left"
@@ -471,10 +583,10 @@ function draw(m = mode, i = posOf(m)) {
   })
 
   // Traits
-  ctx.fillStyle = "#8ab4ff"
+  ctx.fillStyle = C.muted
   ctx.font = `24px ${FONT}`
   ctx.fillText(c.traits.join("  "), 30, H - 50, W - 60)
-  ctx.fillStyle = "#555"
+  ctx.fillStyle = C.faint
   ctx.textAlign = "right"
   ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 50)
 }
@@ -498,10 +610,10 @@ function drawBoard(board, x0, y0, r) {
     const cy = y0 + r + row * r * 1.5
     const u = board?.get(n)
     hexPath(cx, cy, r - 2)
-    ctx.fillStyle = "#1c1c22"
+    ctx.fillStyle = "#161616"
     ctx.fill()
     if (!u) {
-      ctx.strokeStyle = "#2c2c36"
+      ctx.strokeStyle = C.ground
       ctx.lineWidth = 2
       ctx.stroke()
       continue
@@ -528,33 +640,33 @@ function drawBoard(board, x0, y0, r) {
       ctx.textAlign = "center"
       ctx.lineWidth = 3
       ctx.strokeStyle = "#000"
-      ctx.strokeText("★★★", cx, cy + r - 22)
-      ctx.fillStyle = "#ffd700"
-      ctx.fillText("★★★", cx, cy + r - 22)
+      ctx.strokeText("★★★", cx, cy + r - 22) // taste-skill-ignore: the game's star level
+      ctx.fillStyle = C.accent
+      ctx.fillText("★★★", cx, cy + r - 22) // taste-skill-ignore: the game's star level
       ctx.textAlign = "left"
     }
   }
   if (!board) {
-    ctx.fillStyle = "#888"
+    ctx.fillStyle = C.faint
     ctx.font = `24px ${FONT}`
     ctx.fillText("배치 데이터 없음", x0 + hexW * 2.2, y0 + r * 2.4)
   }
 }
 
 function label(text, x, y) {
-  ctx.fillStyle = "#8ab4ff"
+  ctx.fillStyle = C.muted
   ctx.font = `bold 22px ${FONT}`
   ctx.fillText(text, x, y)
 }
 
 function avgText(avg, x, y) {
-  ctx.fillStyle = "#bbb"
+  ctx.fillStyle = C.muted
   ctx.font = `18px ${FONT}`
   ctx.fillText(`${avg.toFixed(2)}등`, x, y)
 }
 
 function pageNumber(i) {
-  ctx.fillStyle = "#555"
+  ctx.fillStyle = C.faint
   ctx.font = `24px ${FONT}`
   ctx.textAlign = "right"
   ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 36)
@@ -570,7 +682,7 @@ function drawDetail(c, i) {
   const x0 = 520
   label("추천 상징", x0, 124)
   if (!c.emblems.length) {
-    ctx.fillStyle = "#666"
+    ctx.fillStyle = C.faint
     ctx.font = `18px ${FONT}`
     ctx.fillText("데이터 없음", x0, 160)
   }
@@ -587,11 +699,11 @@ function drawDetail(c, i) {
   label("변형 덱", x0, 330)
   c.variants.forEach((v, j) => {
     const y = 362 + j * 44
-    ctx.fillStyle = "#ddd"
+    ctx.fillStyle = C.text
     ctx.font = `bold 18px ${FONT}`
     ctx.fillText(`${v.level}레벨`, x0, y + 10)
     let x = x0 + 62
-    for (const [sign, list, color] of [["+", v.added, "#4ade80"], ["−", v.removed, "#f87171"]]) {
+    for (const [sign, list, color] of [["+", v.added, C.accent], ["−", v.removed, C.negative]]) {
       if (!list.length) continue
       ctx.fillStyle = color
       ctx.font = `bold 24px ${FONT}`
@@ -599,7 +711,7 @@ function drawDetail(c, i) {
       x += 20
       for (const u of list) {
         ctx.globalAlpha = sign === "−" ? 0.55 : 1
-        drawIcon(u.icon, u.name, x, y, 34, sign === "−" ? "#7f1d1d" : COST_COLORS[u.cost])
+        drawIcon(u.icon, u.name, x, y, 34, sign === "−" ? C.raised : COST_COLORS[u.cost])
         ctx.globalAlpha = 1
         x += 42
       }
@@ -608,7 +720,7 @@ function drawDetail(c, i) {
     avgText(v.avg, Math.max(x + 4, W - 110), y + 10)
   })
   if (!c.variants.length) {
-    ctx.fillStyle = "#666"
+    ctx.fillStyle = C.faint
     ctx.font = `18px ${FONT}`
     ctx.fillText("데이터 없음", x0, 366)
   }
@@ -629,11 +741,11 @@ function drawItems(c, i) {
     const rows = [...k.builds.map((b, n) => [`${n + 1}순위`, b]), ["유물", k.art]]
     rows.forEach(([name, b], n) => {
       const y = 226 + n * 66
-      ctx.fillStyle = name === "유물" ? ARTIFACT_COLOR : "#999"
+      ctx.fillStyle = name === "유물" ? ARTIFACT_COLOR : C.muted
       ctx.font = `bold 18px ${FONT}`
       ctx.fillText(name, x0, y + 14)
       if (!b) {
-        ctx.fillStyle = "#555"
+        ctx.fillStyle = C.faint
         ctx.font = `18px ${FONT}`
         ctx.fillText("없음", x0 + 58, y + 14)
         return
@@ -650,7 +762,7 @@ function drawAugPage(p, k) {
   ctx.fillStyle = "#fff"
   ctx.font = `bold 46px ${FONT}`
   ctx.fillText(`증강 티어 · ${p.label}`, 30, 26)
-  ctx.fillStyle = "#aaa"
+  ctx.fillStyle = C.muted
   ctx.font = `24px ${FONT}`
   ctx.fillText(`${k + 1}/${augPages.length}`, 30, 80)
   const x0 = 80, cellW = (W - x0 - 20) / AUG_COLS, rowH = 66, gap = 16
@@ -659,18 +771,18 @@ function drawAugPage(p, k) {
     // A new tier starts below a divider with some room for the names above.
     y += rowH + (row.first && r > 0 ? gap : 0)
     if (row.first || r === 0) {
-      ctx.fillStyle = TIER_COLORS[row.tier]
+      ctx.fillStyle = row.tier === "S" ? C.accent : C.text
       ctx.font = `800 36px ${FONT}`
       ctx.fillText(row.tier, 34, y + 4)
       if (r > 0) {
-        ctx.fillStyle = "#2a2a33"
+        ctx.fillStyle = C.raised
         ctx.fillRect(30, y - gap / 2 - 3, W - 60, 2)
       }
     }
     row.augs.forEach((a, n) => {
       const x = x0 + n * cellW
       drawIcon(a.icon, a.name, x + (cellW - 46) / 2, y, 46, null)
-      ctx.fillStyle = "#ddd"
+      ctx.fillStyle = C.text
       ctx.font = `15px ${FONT}`
       ctx.textAlign = "center"
       ctx.fillText(a.name, x + cellW / 2, y + 48, cellW - 4)
@@ -679,16 +791,38 @@ function drawAugPage(p, k) {
   })
 }
 
+// The list can be narrowed to one tier with the count cards above it; the
+// video always holds every comp.
+let tierFilter = null
+function renderTiers() {
+  const el = document.getElementById("tiers")
+  el.innerHTML = ""
+  for (const t of ["S", "A", "B", "C"]) {
+    const n = comps.filter((c) => c.tier === t).length
+    const b = document.createElement("button")
+    b.setAttribute("aria-pressed", String(tierFilter === t))
+    b.innerHTML = `<span>${t}티어</span><strong class="num">${n}</strong>`
+    b.onclick = () => { tierFilter = tierFilter === t ? null : t; renderList() }
+    el.appendChild(b)
+  }
+}
+
 function renderList() {
-  listEl.innerHTML = ""
-  comps.forEach((c, i) => {
-    const el = document.createElement("div")
-    el.className = "comp" + (i === idx ? " sel" : "")
-    el.innerHTML = `<span class="tier" style="background:${TIER_COLORS[c.tier]}">${c.tier}</span>
-      <span class="name">${c.title}</span><span class="avg">${c.avg.toFixed(2)}</span>`
+  renderTiers()
+  const shown = comps.map((c, i) => [c, i]).filter(([c]) => !tierFilter || c.tier === tierFilter)
+  document.getElementById("comps-title").textContent = `메타 덱 ${shown.length}개`
+  listEl.innerHTML = `<div class="head"><span>덱</span><span>평균 등수</span></div>`
+  for (const [c, i] of shown) {
+    const el = document.createElement("button")
+    el.className = "row"
+    el.setAttribute("aria-current", String(i === idx && mode !== 3))
+    const t = TIER_STYLE[c.tier]
+    el.innerHTML = `<span class="tier" style="background:${t.bg};color:${t.fg}">${c.tier}</span>
+      <span class="name"><b>${i + 1}. ${c.title}</b><small>${c.level || ""}</small></span>
+      <span class="avg num">${c.avg.toFixed(2)}</span>`
     el.onclick = () => select(i)
     listEl.appendChild(el)
-  })
+  }
 }
 
 // Every page becomes a SEG-second still segment of a real MP4, so the PiP
@@ -701,9 +835,14 @@ let videoUrl = null
 const MODE_NAMES = ["요약", "상세", "아이템", "증강 티어"]
 const modeCount = () => (augPages.length ? 4 : 3)
 const trackLen = (m) => (m === 3 ? augPages.length : comps.length)
-const trackStart = (m) => { let s = 0; for (let k = 0; k < m; k++) s += trackLen(k); return s }
+// Each track is wrapped in copies of its own last and first page, so a skip
+// past either end lands on the right picture straight away (then quietly
+// moves to the real page) instead of in a neighbouring track or past the
+// end of the video.
+const trackStart = (m) => { let s = 0; for (let k = 0; k < m; k++) s += trackLen(k) + 2; return s }
+const trackPages = (m) => { const n = trackLen(m); return [n - 1, ...Array.from({ length: n }, (_, k) => k), 0] }
 const posOf = (m) => (m === 3 ? augPage : idx)
-const segStart = () => (trackStart(mode) + posOf(mode)) * SEG
+const segStart = () => (trackStart(mode) + 1 + posOf(mode)) * SEG
 
 function show(m, k) {
   if (!comps.length) return
@@ -712,7 +851,10 @@ function show(m, k) {
   mode = m
   if (m === 3) augPage = k
   else idx = k
-  document.getElementById("detail").textContent = `화면: ${MODE_NAMES[mode]}`
+  for (const b of document.querySelectorAll("#views button")) {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.mode) === mode))
+    b.hidden = Number(b.dataset.mode) >= modeCount()
+  }
   if (fileMode) seekTo(segStart() + 0.5)
   else draw()
   renderList()
@@ -739,10 +881,13 @@ video.addEventListener("seeking", () => {
   const s = Math.min(Math.max(Math.floor(video.currentTime / SEG), 0), trackStart(modeCount()) - 1)
   let m = 0
   while (m < modeCount() - 1 && s >= trackStart(m + 1)) m++
-  const k = s - trackStart(m)
-  log(`skip → ${video.currentTime.toFixed(1)}s (${MODE_NAMES[m]} ${k + 1})`)
-  // A skip past either end of a view wraps within the current view.
+  const j = s - trackStart(m)
+  const k = trackPages(m)[j]
+  const copy = j === 0 || j === trackLen(m) + 1
+  log(`skip → ${video.currentTime.toFixed(1)}s (${MODE_NAMES[m]} ${k + 1}${copy ? " 복사본" : ""})`)
+  // Only rapid repeated skips get this far; wrap within the current view.
   if (m !== mode) return show(mode, m > mode ? 0 : trackLen(mode) - 1)
+  if (copy) return show(mode, k)
   if (k !== posOf(mode)) {
     if (mode === 3) augPage = k
     else { idx = k; renderList() }
@@ -821,7 +966,7 @@ async function buildVideo() {
   })
   enc.configure(config)
   const views = []
-  for (let m = 0; m < modeCount(); m++) for (let i = 0; i < trackLen(m); i++) views.push([m, i])
+  for (let m = 0; m < modeCount(); m++) for (const i of trackPages(m)) views.push([m, i])
   for (let k = 0; k < views.length; k++) {
     draw(...views[k])
     // Constant 1 fps so iOS can seek. Only each segment's first frame is a
@@ -847,7 +992,9 @@ async function buildVideo() {
 
 document.getElementById("prev").onclick = () => step(-1)
 document.getElementById("next").onclick = () => step(1)
-document.getElementById("detail").onclick = () => cycleMode()
+for (const b of document.querySelectorAll("#views button")) {
+  b.onclick = () => { const m = Number(b.dataset.mode); show(m, posOf(m)) }
+}
 
 let autoTimer = null
 document.getElementById("auto").onchange = (e) => {
@@ -886,7 +1033,7 @@ document.getElementById("pip").onclick = () => {
 // reopening the page skips the downloads and the encoding. A page left open
 // reloads once the data is a day old, but never while PiP is up since a
 // reload would close it. Bump CACHE_VERSION whenever the drawing changes.
-const CACHE_NAME = "tftpip", CACHE_VERSION = 1
+const CACHE_NAME = "tftpip", CACHE_VERSION = 3
 const META_KEY = "./cache/meta.json", VIDEO_KEY = "./cache/video.mp4"
 const REFRESH_MS = 24 * 60 * 60 * 1000
 let dataSavedAt = Date.now()
@@ -902,9 +1049,12 @@ document.getElementById("reload").onclick = async () => {
   location.reload()
 }
 
+const shortTime = (t) => new Date(t).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+const clockTime = (t) => new Date(t).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })
 function showUpdated(updated) {
+  document.getElementById("fresh").textContent = `${clockTime(dataSavedAt)} 받음`
   document.getElementById("updated").textContent =
-    `MetaTFT 데이터 ${new Date(updated).toLocaleString("ko-KR")} · 받은 시각 ${new Date(dataSavedAt).toLocaleString("ko-KR")} · 하루마다 새로 받음`
+    `MetaTFT 통계 ${shortTime(updated)} 기준 · 현재 패치 최근 3일 플래티넘 이상 · 받은 지 하루가 지나면 새로 받아요`
 }
 
 function startVideo(blob) {
@@ -955,7 +1105,7 @@ async function saveCache(blob, updated) {
       version: CACHE_VERSION,
       savedAt: dataSavedAt,
       updated,
-      comps: comps.map(({ title, tier, avg }) => ({ title, tier, avg })),
+      comps: comps.map(({ title, tier, avg, level }) => ({ title, tier, avg, level })),
       augPages: augPages.length,
     }
     await cache.put(VIDEO_KEY, new Response(blob, { headers: { "Content-Type": "video/mp4" } }))
@@ -1009,14 +1159,9 @@ async function saveCache(blob, updated) {
       const img = imageOf(a.src)
       if (img) images[a.icon] = { img: tintImage(img, a.tint, a.glyph) }
     }
-    // Canvas text only uses a web font once it has loaded, and the font
-    // ships in subsets, so load the ones covering every string drawn.
-    const text = [
-      "불러오는 중상세아이템평균등레벨리롤빠른순위유물없음배치데이터추천상징변형덱증강티어실버골드프리즘SABCD0123456789./·★+−",
-      ...comps.flatMap((c) => [c.title, ...c.units.map((u) => u.name), ...c.traits, ...c.carries.map((k) => k.name)]),
-      ...augPages.flatMap((p) => p.rows.flatMap((r) => r.augs.map((a) => a.name))),
-    ].join("")
-    await Promise.all(["400", "700", "800"].map((w) => document.fonts.load(`${w} 24px "Nanum Gothic"`, text)))
+    // Canvas text only uses a web font once it has loaded; load all weights.
+    await Promise.all(["400", "700", "800"].map((w) => document.fonts.load(`${w} 24px "Nanum Gothic"`, "가A1")))
+      .then((r) => { if (r.some((f) => !f.length)) log("글꼴 일부 실패") })
       .catch((e) => log("글꼴 실패: " + e.message))
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
     draw()
@@ -1031,7 +1176,7 @@ async function saveCache(blob, updated) {
       select(0)
     }
   } catch (e) {
-    listEl.textContent = "불러오기 실패: " + e.message
+    listEl.innerHTML = `<p class="state">MetaTFT에서 덱을 불러오지 못했어요 (${e.message}). <button class="text" onclick="location.reload()">다시 시도</button></p>`
   }
 })()
 </script>
