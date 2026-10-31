@@ -45,6 +45,7 @@
   .primary { background: #fff; color: #000; font-weight: 800; font-size: 16px; }
   .step:active, .row:active { background: var(--raised); }
   .primary:active { background: #d9d9d9; }
+  .primary:disabled { background: var(--raised); color: var(--muted); }
 
 
 
@@ -86,7 +87,7 @@
     <div class="screen"><video id="video" muted playsinline></video></div>
     <div class="controls">
       <button class="step" id="prev" aria-label="이전">◀</button>
-      <button class="primary" id="pip">PiP 시작</button>
+      <button class="primary" id="pip" disabled>준비 중</button>
       <button class="step" id="next" aria-label="다음">▶</button>
     </div>
   </section>
@@ -376,6 +377,7 @@ async function fetchDetails(ids, clusterId) {
 }
 
 const MIN_SAMPLE = 50
+const MAX_SWAP = 4
 
 function addDetails(c, det) {
   if (!det) return
@@ -405,9 +407,11 @@ function addDetails(c, det) {
     .slice(0, 4)
     .sort((a, b) => a.level - b.level)
     .map(({ level, opts }) => {
+      // A board that swaps more than MAX_SWAP units is another comp, not a variant.
       const o = [...opts].sort((a, b) => b.score - a.score).find((o) => {
-        const us = o.units_list.split("&")
-        return o.count >= MIN_SAMPLE && (us.length !== main.size || us.some((u) => !main.has(u)))
+        const us = new Set(o.units_list.split("&"))
+        const swaps = [...us].filter((u) => !main.has(u)).length + [...main].filter((u) => !us.has(u)).length
+        return o.count >= MIN_SAMPLE && swaps > 0 && swaps <= MAX_SWAP
       })
       if (!o) return null
       const us = new Set(o.units_list.split("&"))
@@ -609,11 +613,11 @@ function avgText(avg, x, y) {
   ctx.fillText(`${avg.toFixed(2)}등`, x, y)
 }
 
-function pageNumber(i) {
+function pageNumber(i, left = false) {
   ctx.fillStyle = C.faint
   ctx.font = `24px ${FONT}`
-  ctx.textAlign = "right"
-  ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 36)
+  ctx.textAlign = left ? "left" : "right"
+  ctx.fillText(`${i + 1}/${comps.length}`, left ? 30 : W - 30, H - 36)
   ctx.textAlign = "left"
 }
 
@@ -668,7 +672,8 @@ function drawDetail(c, i) {
     ctx.font = `18px ${FONT}`
     ctx.fillText("데이터 없음", x0, 366)
   }
-  pageNumber(i)
+  // Bottom-left: a fourth variant row reaches the bottom-right corner.
+  pageNumber(i, true)
 }
 
 // Third page of a comp: each carry's three most played builds, then the
@@ -958,7 +963,7 @@ document.getElementById("pip").onclick = () => {
 // reopening the page skips the downloads and the encoding. A page left open
 // reloads once the data is a day old, but never while PiP is up since a
 // reload would close it. Bump CACHE_VERSION whenever the drawing changes.
-const CACHE_NAME = "tftpip", CACHE_VERSION = 3
+const CACHE_NAME = "tftpip", CACHE_VERSION = 4
 const META_KEY = "./cache/meta.json", VIDEO_KEY = "./cache/video.mp4"
 const REFRESH_MS = 24 * 60 * 60 * 1000
 let dataSavedAt = Date.now()
@@ -982,6 +987,14 @@ function showUpdated(updated) {
     `MetaTFT 통계 ${shortTime(updated)} 기준 · 현재 패치 최근 3일 플래티넘 이상 · 받은 지 하루가 지나면 새로 받아요`
 }
 
+// PiP stays off until the final video is in place: swapping the source under
+// an open PiP window (live stream → file) can break it.
+function enablePip() {
+  const b = document.getElementById("pip")
+  b.disabled = false
+  b.textContent = "PiP 시작"
+}
+
 function startVideo(blob) {
   clearInterval(streamTimer)
   video.srcObject = null
@@ -997,6 +1010,7 @@ function startVideo(blob) {
     video.defaultPlaybackRate = video.playbackRate = 0.25
     show(mode, posOf(mode))
     resume()
+    enablePip()
   })
   log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
 }
@@ -1101,6 +1115,7 @@ async function saveCache(blob, updated) {
     } catch (e) {
       log("영상 생성 실패, 스트림 모드 사용: " + e.message)
       select(0)
+      enablePip()
     }
   } catch (e) {
     listEl.innerHTML = `<p class="state">MetaTFT에서 덱을 불러오지 못했어요 (${e.message}). <button class="text" onclick="location.reload()">다시 시도</button></p>`
