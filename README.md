@@ -48,6 +48,11 @@
 | PiP가 멈추고 아무 버튼도 안 먹힘 | 페이지를 다시 열어 주세요. 계속되면 **새로 받기**를 눌러 보세요 |
 | `불러오기 실패` | MetaTFT API가 일시적으로 응답하지 않는 경우예요. 잠시 뒤 다시 열어 주세요 |
 
+## 배포
+
+- GitHub Pages: `main`에 push하면 반영돼요.
+- tft.jihwan.kim (개인 서버, nginx 정적 사이트 `/etc/nginx/sites-available/tft.jihwan.kim`): push 뒤 `./deploy.sh`.
+
 ## 새 시즌·패치 때
 
 증강 아이콘 목록(`augment-icons.json`)은 미리 만들어 둔 파일이라, 새 시즌이 시작되면 다시 만들어야 해요. 갱신 전에는 MetaTFT 아이콘을 등급 색으로 칠해서 대신 보여줘요.
