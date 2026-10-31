@@ -16,7 +16,8 @@
   .tier { width: 28px; text-align: center; font-weight: 700; border-radius: 6px; padding: 2px 0; color: #000; }
   .name { flex: 1; }
   .avg { color: #999; font-size: 13px; }
-  #log { margin-top: 10px; font: 11px ui-monospace, monospace; color: #777; white-space: pre-wrap; }
+  #log, #prevlog { margin-top: 10px; font: 11px ui-monospace, monospace; color: #777; white-space: pre-wrap; }
+  details { margin-top: 10px; color: #777; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -27,6 +28,7 @@
   <button id="next">▶</button>
 </div>
 <div class="row">
+  <button id="detail">상세 보기</button>
   <select id="auto">
     <option value="0">자동 넘김 끔</option>
     <option value="10">10초마다 넘김</option>
@@ -37,10 +39,33 @@
 <div id="updated" class="avg"></div>
 <div id="list">불러오는 중...</div>
 <div id="log"></div>
+<details><summary>이전 세션 로그</summary><div id="prevlog"></div></details>
 
 <script>
-window.onerror = (m, src, line) => { document.getElementById("log").textContent += `에러: ${m} (${line})\n` }
-window.onunhandledrejection = (e) => { document.getElementById("log").textContent += `에러: ${e.reason}\n` }
+// The log is kept in localStorage so a session that froze or was killed by
+// iOS can still be inspected after reopening the page.
+const LOG_KEY = "tftpip-log", BEAT_KEY = "tftpip-beat", EXIT_KEY = "tftpip-exit"
+const logLines = []
+function log(m) {
+  const line = `${new Date().toLocaleTimeString("ko-KR", { hour12: false })} ${m}`
+  document.getElementById("log").textContent += line + "\n"
+  logLines.push(line)
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(logLines.slice(-300))) } catch {}
+}
+{
+  const prev = JSON.parse(localStorage.getItem(LOG_KEY) || "[]")
+  const beat = Number(localStorage.getItem(BEAT_KEY) || 0)
+  let note = ""
+  if (beat && !localStorage.getItem(EXIT_KEY)) {
+    note = `※ 정상 종료 기록 없음: 마지막 응답 ${new Date(beat).toLocaleTimeString("ko-KR", { hour12: false })} (iOS가 페이지를 종료했거나 멈췄을 수 있음)\n`
+  }
+  document.getElementById("prevlog").textContent = note + prev.join("\n")
+  localStorage.removeItem(EXIT_KEY)
+}
+setInterval(() => localStorage.setItem(BEAT_KEY, Date.now()), 5000)
+addEventListener("pagehide", () => { log("pagehide"); localStorage.setItem(EXIT_KEY, "1") })
+window.onerror = (m, src, line) => log(`에러: ${m} (${line})`)
+window.onunhandledrejection = (e) => log(`에러: ${e.reason}`)
 const MUXER_URL = "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs"
 
 // Shows MetaTFT ranked comps one at a time on a canvas that is streamed into a
@@ -48,9 +73,11 @@ const MUXER_URL = "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.
 const COMPS_URL = "https://api-hc.metatft.com/tft-comps-api/comps_data?queue=1100"
 const LOOKUP_URL = (set) => `https://data.metatft.com/lookups/${set}_latest_ko_kr.json`
 // Same filters as the default metatft.com/comps view, so order and tiers match.
+const AUG_TIERS_URL = (clusterId) => `https://api-hc.metatft.com/tft-comps-api/comp_augment_tiers?cluster_id=${clusterId}`
 const STATS_URL = (clusterId) => "https://api-hc.metatft.com/tft-comps-api/comps_stats?queue=1100&patch=current&days=3" +
   `&rank=CHALLENGER,DIAMOND,EMERALD,GRANDMASTER,MASTER,PLATINUM&permit_filter_adjustment=true&cluster_id=${clusterId}`
 const MIN_PICK_RATE = 0.01
+const MAX_AUGMENTS = 6
 const COST_COLORS = { 1: "#9aa4af", 2: "#22c55e", 3: "#3b82f6", 4: "#a855f7", 5: "#f5b301" }
 const TIER_COLORS = { S: "#ff7a7a", A: "#ffb86b", B: "#ffe66b", C: "#9be08f", D: "#8ab4ff" }
 const ICON = (kind, name) =>
@@ -78,10 +105,10 @@ const canvas = Object.assign(document.createElement("canvas"), { width: W, heigh
 const ctx = canvas.getContext("2d")
 const video = document.getElementById("video")
 const listEl = document.getElementById("list")
-const log = (m) => { document.getElementById("log").textContent += m + "\n" }
 
 let comps = []
 let idx = 0
+let detail = false
 
 function tierOf(avg) {
   return avg < 4.25 ? "S" : avg < 4.5 ? "A" : avg < 4.75 ? "B" : avg < 5 ? "C" : "D"
@@ -101,14 +128,37 @@ function isEmblem(item) {
     (item?.composition || []).some((c) => c === "TFT_Item_Spatula" || c === "TFT_Item_FryingPan")
 }
 
-function buildComps(raw, stats, lk) {
+// Comp-specific augment tiers list ~90 mostly generic picks, so the comp's
+// own trait augments go first, then by tier; +/++ and per-champion variants
+// collapse to one by name.
+function pickAugments(entry, traitApis, augByApi) {
+  if (!entry) return []
+  const rank = { S: 0, A: 1, B: 2, C: 3, D: 4 }
+  const seen = new Set()
+  return entry.augments
+    .map((a, k) => ({ a, k, d: augByApi[a.id] }))
+    .filter(({ d }) => d)
+    .map((x) => ({ ...x, own: (x.d.associatedTraits || []).some((t) => traitApis.has(t)) }))
+    .sort((x, y) => (y.own - x.own) || ((rank[x.a.tier] ?? 9) - (rank[y.a.tier] ?? 9)) || x.k - y.k)
+    .filter(({ d }) => {
+      const base = d.name.replace(/\+*$/, "")
+      if (seen.has(base)) return false
+      seen.add(base)
+      return true
+    })
+    .slice(0, MAX_AUGMENTS)
+    .map(({ a, d }) => ({ name: d.name, tier: a.tier, icon: ICON("augments", d.apiName) }))
+}
+
+function buildComps(raw, stats, lk, augTiers) {
   const unitByAsset = {}
   for (const u of lk.units) for (const a of u.assetNames || []) unitByAsset[a] = u
   for (const [asset, api] of Object.entries(lk.unitAssetNames || {})) {
     if (!unitByAsset[asset]) unitByAsset[asset] = lk.units.find((u) => u.apiName === api)
   }
-  const nameOf = {}
-  for (const t of lk.traits) nameOf[t.apiName] = t.name
+  const nameOf = {}, traitApiOf = {}, augByApi = {}
+  for (const t of lk.traits) { nameOf[t.apiName] = t.name; traitApiOf[t.name] = t.apiName }
+  for (const a of lk.augments || []) augByApi[a.apiName] = a
   for (const i of lk.items) nameOf[i.apiName] = i.name
   const unitName = (a) => unitByAsset[a]?.name || a.replace(/^DA_(18_)?|18$/g, "")
   const unitIcon = (a) => ICON("champions", unitByAsset[a]?.apiName || a)
@@ -127,7 +177,7 @@ function buildComps(raw, stats, lk) {
       const places = r.places.slice(0, 8)
       const count = places.reduce((a, b) => a + b, 0)
       const avg = places.reduce((a, n, k) => a + (k + 1) * n, 0) / count
-      return { c: details[r.cluster], avg, pick: count / total * 8 }
+      return { c: details[r.cluster], id: r.cluster, avg, pick: count / total * 8 }
     })
     .filter(({ c, pick }) =>
       pick >= MIN_PICK_RATE &&
@@ -135,7 +185,7 @@ function buildComps(raw, stats, lk) {
       !(c.top_itemNames || []).some((t) => t.pcnt >= 0.5 && isEmblem(itemByApi[t.itemNames])) &&
       Math.max(...c.centroid) >= 1)
     .sort((a, b) => a.avg - b.avg)
-    .map(({ c, avg, pick }) => {
+    .map(({ c, id, avg, pick }) => {
       // `stars` lists units commonly 3-starred in this cluster; it can name
       // units outside the final board, so only mark the ones on it.
       const stars = new Set(c.stars || [])
@@ -169,7 +219,11 @@ function buildComps(raw, stats, lk) {
           icon: unitIcon(b.unit),
           cost: unitByAsset[b.unit]?.cost || 1,
           three: stars.has(b.unit),
-          items: b.buildName.map((i) => ({ name: itemName(i), icon: ICON("items", i) })),
+          items: b.buildName.map((i) => ({
+            name: itemName(i),
+            icon: ICON("items", i),
+            parts: (itemByApi[i]?.composition || []).map((p) => ({ name: itemName(p), icon: ICON("items", p) })),
+          })),
         }))
 
       const title = c.name.map((n) => (n.type === "unit" ? unitName(n.name) : nameOf[n.name] || n.name)).join(" ")
@@ -180,6 +234,7 @@ function buildComps(raw, stats, lk) {
         tier: tierOf(avg),
         level: levelText(c.levelling),
         units, traits, carries,
+        augments: pickAugments(augTiers[id], new Set(Object.keys(traitCount).map((t) => traitApiOf[t])), augByApi),
       }
     })
 }
@@ -214,20 +269,8 @@ function drawUnit(u, x, y, size) {
   ctx.textAlign = "left"
 }
 
-function draw(i = idx) {
-  ctx.fillStyle = "#0b0b0f"
-  ctx.fillRect(0, 0, W, H)
-  ctx.textBaseline = "top"
-  ctx.textAlign = "left"
-  const c = comps[i]
-  if (!c) {
-    ctx.fillStyle = "#fff"
-    ctx.font = "40px -apple-system, sans-serif"
-    ctx.fillText("불러오는 중...", 40, 40)
-    return
-  }
-
-  // Header: tier badge, rank, title
+// Header: tier badge, rank, title
+function drawHeader(c, i, sub) {
   ctx.fillStyle = TIER_COLORS[c.tier]
   ctx.fillRect(30, 28, 64, 64)
   ctx.fillStyle = "#000"
@@ -240,7 +283,24 @@ function draw(i = idx) {
   ctx.fillText(`${i + 1}. ${c.title}`, 112, 32, W - 140)
   ctx.fillStyle = "#aaa"
   ctx.font = "26px -apple-system, sans-serif"
-  ctx.fillText(`평균 ${c.avg.toFixed(2)}등 · ${c.level}`, 112, 86)
+  ctx.fillText(sub, 112, 86)
+}
+
+function draw(i = idx, det = detail) {
+  ctx.fillStyle = "#0b0b0f"
+  ctx.fillRect(0, 0, W, H)
+  ctx.textBaseline = "top"
+  ctx.textAlign = "left"
+  const c = comps[i]
+  if (!c) {
+    ctx.fillStyle = "#fff"
+    ctx.font = "40px -apple-system, sans-serif"
+    ctx.fillText("불러오는 중...", 40, 40)
+    return
+  }
+  if (det) return drawDetail(c, i)
+
+  drawHeader(c, i, `평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
 
   // Units as cost-bordered portraits, gold stars on the ones to 3-star
   const n = c.units.length
@@ -268,6 +328,59 @@ function draw(i = idx) {
   ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 50)
 }
 
+// Second page of a comp, toggled with the PiP play/pause button.
+function drawDetail(c, i) {
+  drawHeader(c, i, `상세 · 평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
+
+  ctx.fillStyle = "#8ab4ff"
+  ctx.font = "bold 24px -apple-system, sans-serif"
+  ctx.fillText("추천 증강", 30, 120)
+  if (!c.augments.length) {
+    ctx.fillStyle = "#777"
+    ctx.font = "24px -apple-system, sans-serif"
+    ctx.fillText("데이터 없음", 150, 120)
+  }
+  const step = (W - 60) / MAX_AUGMENTS
+  c.augments.forEach((a, j) => {
+    const x = 30 + j * step + (step - 80) / 2
+    drawIcon(a.icon, a.name, x, 160, 80, TIER_COLORS[a.tier] || "#444")
+    ctx.fillStyle = "#ddd"
+    ctx.font = "20px -apple-system, sans-serif"
+    ctx.textAlign = "center"
+    ctx.fillText(a.name, 30 + j * step + step / 2, 252, step - 8)
+    ctx.textAlign = "left"
+  })
+
+  ctx.fillStyle = "#8ab4ff"
+  ctx.font = "bold 24px -apple-system, sans-serif"
+  ctx.fillText("아이템 조합", 30, 296)
+  const colW = (W - 60) / 3
+  c.carries.forEach((k, j) => {
+    const cx = 30 + j * colW
+    drawUnit(k, cx, 352, 70)
+    k.items.forEach((it, m) => {
+      const y = 334 + m * 58
+      let x = cx + 86
+      drawIcon(it.icon, it.name, x, y, 46, "#444")
+      x += 56
+      if (!it.parts.length) return
+      ctx.fillStyle = "#888"
+      ctx.font = "26px -apple-system, sans-serif"
+      ctx.fillText("=", x, y + 8)
+      x += 22
+      it.parts.forEach((p, n) => {
+        if (n) { ctx.fillStyle = "#888"; ctx.fillText("+", x, y + 8); x += 20 }
+        drawIcon(p.icon, p.name, x, y + 5, 36, "#333")
+        x += 44
+      })
+    })
+  })
+  ctx.fillStyle = "#555"
+  ctx.font = "24px -apple-system, sans-serif"
+  ctx.textAlign = "right"
+  ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 50)
+}
+
 function renderList() {
   listEl.innerHTML = ""
   comps.forEach((c, i) => {
@@ -281,41 +394,98 @@ function renderList() {
 }
 
 // Each comp becomes a SEG-second still segment of a real MP4, so the PiP
-// skip ±10s buttons land exactly on the previous/next comp.
+// skip ±10s buttons land exactly on the previous/next comp. Summary pages
+// fill the first half of the video and detail pages the second half, so
+// skipping inside either half pages through comps in that view.
 const SEG = 10
 let fileMode = false
+let videoUrl = null
+const segOf = (i, det) => (det ? comps.length : 0) + i
+const segStart = () => segOf(idx, detail) * SEG
 
-function select(i) {
+function select(i, det = detail) {
   if (!comps.length) return
   idx = Math.min(Math.max(i, 0), comps.length - 1)
-  if (fileMode) seekTo(idx * SEG + 0.5)
+  detail = det
+  document.getElementById("detail").textContent = detail ? "요약 보기" : "상세 보기"
+  if (fileMode) seekTo(segStart() + 0.5)
   else draw()
   renderList()
 }
 
-// Seeks we issue ourselves (paging, looping) must not be mistaken for the
-// PiP skip buttons.
-let selfSeek = false
+// Seeks we issue ourselves (paging, holding) must not be mistaken for the
+// PiP skip buttons. They are recognised by their target time rather than a
+// flag, which could get stuck if iOS coalesces or drops a seeked event.
+let selfTarget = -1
 function seekTo(t) {
-  selfSeek = true
+  selfTarget = t
   video.currentTime = t
 }
+const isSelfSeek = () => Math.abs(video.currentTime - selfTarget) < 0.3
 
 // The video keeps playing so PiP always repaints (a paused PiP ignores seeks
-// visually); playback is held inside the current comp's segment instead.
+// visually); playback is held inside the current segment instead.
 video.addEventListener("seeking", () => {
-  if (!fileMode || !comps.length) return
-  if (selfSeek) return
-  const i = Math.min(Math.max(Math.floor(video.currentTime / SEG), 0), comps.length - 1)
-  log(`skip → ${video.currentTime.toFixed(1)}s (덱 ${i + 1})`)
-  if (i !== idx) { idx = i; renderList() }
+  if (!fileMode || !comps.length || isSelfSeek()) return
+  const n = comps.length
+  const s = Math.min(Math.max(Math.floor(video.currentTime / SEG), 0), 2 * n - 1)
+  log(`skip → ${video.currentTime.toFixed(1)}s (덱 ${s % n + 1}${s >= n ? " 상세" : ""})`)
+  // A skip past either end of a half wraps within the current view.
+  if ((s >= n) !== detail) return select(detail ? n - 1 : 0)
+  if (s % n !== idx) { idx = s % n; renderList() }
 })
-video.addEventListener("seeked", () => { selfSeek = false })
 video.addEventListener("timeupdate", () => {
   if (!fileMode || video.seeking) return
-  if (video.currentTime >= idx * SEG + SEG - 1.5 || video.currentTime < idx * SEG) seekTo(idx * SEG + 0.5)
+  const t0 = segStart()
+  if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5)
 })
-video.addEventListener("ended", () => { seekTo(idx * SEG + 0.5); video.play().catch(() => {}) })
+
+// Play/pause in PiP toggles the detail page; the video resumes right away so
+// it never sits paused. This also recovers from pauses iOS issues itself.
+let lastToggle = 0
+video.addEventListener("pause", () => {
+  if (!fileMode || !comps.length) return
+  const now = Date.now()
+  if (now - lastToggle > 400) {
+    lastToggle = now
+    select(idx, !detail)
+    log(`⏯ → ${detail ? "상세" : "요약"} (덱 ${idx + 1})`)
+  }
+  video.play().catch((e) => log("재생 재개 실패: " + e.message))
+})
+
+for (const ev of ["waiting", "stalled", "emptied", "abort"]) {
+  video.addEventListener(ev, () => log(`video ${ev} @${video.currentTime.toFixed(1)}s`))
+}
+// A decoder lost while the game hogs the GPU/memory: reattach the same file.
+video.addEventListener("error", () => {
+  if (!fileMode || !videoUrl) return
+  log(`video error ${video.error?.code}: ${video.error?.message || ""} → 다시 연결`)
+  video.src = videoUrl
+  video.addEventListener("loadedmetadata", () => { select(idx); video.play().catch(() => {}) }, { once: true })
+})
+
+// Watchdog: if playback ends up paused anyway or stops advancing, nudge it.
+let lastPos = -1, stuckFor = 0
+setInterval(() => {
+  const pip = video.webkitPresentationMode === "picture-in-picture" || !!document.pictureInPictureElement
+  if (!fileMode || (document.hidden && !pip)) return
+  if (video.paused) {
+    log("watchdog: 멈춤 감지 → 재생")
+    video.play().catch(() => {})
+    return
+  }
+  if (video.currentTime === lastPos && !video.seeking) {
+    if (++stuckFor >= 3) {
+      log(`watchdog: 재생 정지 ${stuckFor * 2}초 → 위치 재설정`)
+      stuckFor = 0
+      seekTo(segStart() + 0.5)
+    }
+  } else {
+    stuckFor = 0
+  }
+  lastPos = video.currentTime
+}, 2000)
 
 async function buildVideo() {
   if (!("VideoEncoder" in window)) throw new Error("VideoEncoder 미지원")
@@ -330,24 +500,28 @@ async function buildVideo() {
     error: (e) => { encError = e },
   })
   enc.configure(config)
-  for (let i = 0; i < comps.length; i++) {
-    draw(i)
-    // Constant 1 fps, every frame a keyframe, so any seek lands on a complete
-    // image of the right comp.
+  for (let k = 0; k < 2 * comps.length; k++) {
+    const i = k % comps.length
+    draw(i, k >= comps.length)
+    // Constant 1 fps so iOS can seek. Only each segment's first frame is a
+    // keyframe; the rest repeat it as near-empty delta frames, which keeps the
+    // file (held in memory next to the game) several times smaller.
     for (let sec = 0; sec < SEG; sec++) {
-      const f = new VideoFrame(canvas, { timestamp: (i * SEG + sec) * 1e6, duration: 1e6 })
-      enc.encode(f, { keyFrame: true })
+      const f = new VideoFrame(canvas, { timestamp: (k * SEG + sec) * 1e6, duration: 1e6 })
+      enc.encode(f, { keyFrame: sec === 0 })
       f.close()
     }
   }
   await enc.flush()
   if (encError) throw encError
   muxer.finalize()
+  log(`영상 크기 ${(target.buffer.byteLength / 1e6).toFixed(1)}MB`)
   return URL.createObjectURL(new Blob([target.buffer], { type: "video/mp4" }))
 }
 
 document.getElementById("prev").onclick = () => select(idx - 1)
 document.getElementById("next").onclick = () => select(idx + 1)
+document.getElementById("detail").onclick = () => select(idx, !detail)
 
 let autoTimer = null
 document.getElementById("auto").onchange = (e) => {
@@ -364,6 +538,7 @@ video.play().catch(() => {})
 
 // PiP must be requested synchronously inside the tap handler, while playing.
 video.addEventListener("webkitpresentationmodechanged", () => log("모드: " + video.webkitPresentationMode))
+document.addEventListener("visibilitychange", () => log(document.hidden ? "페이지 숨김" : "페이지 보임"))
 
 document.getElementById("pip").onclick = () => {
   log("PiP 버튼 눌림 (" + (fileMode ? "영상" : "스트림") + " 모드)")
@@ -397,18 +572,22 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
   try {
     const raw = await (await fetch(COMPS_URL, { cache: "no-store" })).json()
     const set = raw.results.data.tft_set || raw.tft_set
-    const [lk, stats] = await Promise.all([
+    const [lk, stats, augTiers] = await Promise.all([
       fetch(LOOKUP_URL(set)).then((r) => r.json()),
       fetch(STATS_URL(raw.cluster_id), { cache: "no-store" }).then((r) => r.json()),
+      // Augments are optional; a failure only leaves the detail pages without them.
+      fetch(AUG_TIERS_URL(raw.cluster_id), { cache: "no-store" }).then((r) => r.json())
+        .then((d) => d.results || {}).catch((e) => { log("증강 불러오기 실패: " + e.message); return {} }),
     ])
-    comps = buildComps(raw, stats, lk)
+    comps = buildComps(raw, stats, lk, augTiers)
     log(`${set} · 덱 ${comps.length}개 · 갱신 ${new Date(stats.updated).toLocaleString("ko-KR")}`)
     document.getElementById("updated").textContent =
       `MetaTFT 데이터 ${new Date(stats.updated).toLocaleString("ko-KR")} · 하루마다 자동 새로고침`
     renderList()
     const urls = new Set(comps.flatMap((c) => [
       ...c.units.map((u) => u.icon),
-      ...c.carries.flatMap((k) => [k.icon, ...k.items.map((it) => it.icon)]),
+      ...c.carries.flatMap((k) => [k.icon, ...k.items.flatMap((it) => [it.icon, ...it.parts.map((p) => p.icon)])]),
+      ...c.augments.map((a) => a.icon),
     ]))
     const loaded = await Promise.all([...urls].map(loadImage))
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
@@ -419,10 +598,12 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
       log(`영상 생성 ${((Date.now() - t0) / 1000).toFixed(1)}초`)
       clearInterval(streamTimer)
       video.srcObject = null
+      videoUrl = url
+      video.loop = true
       video.src = url
       fileMode = true
       video.addEventListener("loadedmetadata", () => { select(idx); video.play().catch(() => {}) }, { once: true })
-      log("영상 모드: PiP ±10초 버튼으로 덱 이동")
+      log("영상 모드: PiP ±10초 버튼으로 덱 이동, ⏯ 로 상세 전환")
     } catch (e) {
       log("영상 생성 실패, 스트림 모드 사용: " + e.message)
       select(0)
