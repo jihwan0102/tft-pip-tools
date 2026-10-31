@@ -819,6 +819,11 @@ async function buildVideo() {
     // keyframe; the rest repeat it as near-empty delta frames, which keeps the
     // file (held in memory next to the game) several times smaller.
     for (let sec = 0; sec < SEG; sec++) {
+      // encode() returns before encoding and keeps a full-size copy of each
+      // queued frame (~2MB); unthrottled, all of them piled up (gigabytes)
+      // and iOS killed the page. Wait for the queue to drain a little.
+      while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 2))
+      if (encError) throw encError
       const f = new VideoFrame(canvas, { timestamp: (k * SEG + sec) * 1e6, duration: 1e6 })
       enc.encode(f, { keyFrame: sec === 0 })
       f.close()
