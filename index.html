@@ -30,6 +30,7 @@
 </div>
 <div class="row">
   <button id="detail">화면: 요약</button>
+  <button id="reload">새로 받기</button>
   <select id="auto">
     <option value="0">자동 넘김 끔</option>
     <option value="10">10초마다 넘김</option>
@@ -199,7 +200,8 @@ function buildComps(raw, stats, lk, buildsById) {
   const total = stats.results.find((r) => r.cluster === "").places[0]
 
   // Placement histogram -> avg, then the site's default hiding rules: low pick
-  // rate, augment-gated or emblem-gated comps, and weak clusters.
+  // rate, augment-gated or emblem-gated comps, and weak clusters; D tier is
+  // dropped too.
   return stats.results
     .filter((r) => r.cluster !== "" && r.cluster !== "-1" && details[r.cluster])
     .map((r) => {
@@ -213,6 +215,7 @@ function buildComps(raw, stats, lk, buildsById) {
       !c.name_string.includes("Augment") &&
       !(c.top_itemNames || []).some((t) => t.pcnt >= 0.5 && isEmblem(itemByApi[t.itemNames])) &&
       Math.max(...c.centroid) >= 1)
+    .filter(({ avg }) => tierOf(avg) !== "D")
     .sort((a, b) => a.avg - b.avg)
     .map(({ c, id, avg, pick }) => {
       // `stars` lists units commonly 3-starred in this cluster; it can name
@@ -751,13 +754,19 @@ video.addEventListener("timeupdate", () => {
   if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5)
 })
 
-// Play/pause in PiP cycles summary → detail → items → augment tiers; the video resumes right away so
-// it never sits paused. This also recovers from pauses iOS issues itself.
-let lastToggle = 0
+// Play/pause in PiP cycles summary → detail → items → augment tiers; the
+// video resumes right away so it never sits paused. iOS also pauses on its
+// own around seeks (our segment holds every few seconds, or a skip), which
+// used to flip the view by itself; pauses that close to a seek only resume.
+let lastToggle = 0, lastSeekAt = 0
+video.addEventListener("seeking", () => { lastSeekAt = Date.now() })
+video.addEventListener("seeked", () => { lastSeekAt = Date.now() })
 video.addEventListener("pause", () => {
   if (!fileMode || !comps.length) return
   const now = Date.now()
-  if (now - lastToggle > 400) {
+  if (video.seeking || now - lastSeekAt < 1500) {
+    log(`pause 무시 (탐색 직후 ${now - lastSeekAt}ms)`)
+  } else if (now - lastToggle > 400) {
     lastToggle = now
     cycleMode()
     log(`⏯ → ${MODE_NAMES[mode]}`)
@@ -833,7 +842,7 @@ async function buildVideo() {
   if (encError) throw encError
   muxer.finalize()
   log(`영상 크기 ${(target.buffer.byteLength / 1e6).toFixed(1)}MB`)
-  return URL.createObjectURL(new Blob([target.buffer], { type: "video/mp4" }))
+  return new Blob([target.buffer], { type: "video/mp4" })
 }
 
 document.getElementById("prev").onclick = () => step(-1)
@@ -873,20 +882,92 @@ document.getElementById("pip").onclick = () => {
   }
 }
 
-// Comps are fetched on load; a page left open reloads once a day, but never
-// while PiP is up since a reload would close it.
+// The built video and the comp list are kept in Cache Storage for a day, so
+// reopening the page skips the downloads and the encoding. A page left open
+// reloads once the data is a day old, but never while PiP is up since a
+// reload would close it. Bump CACHE_VERSION whenever the drawing changes.
+const CACHE_NAME = "tftpip", CACHE_VERSION = 1
+const META_KEY = "./cache/meta.json", VIDEO_KEY = "./cache/video.mp4"
 const REFRESH_MS = 24 * 60 * 60 * 1000
-const loadedAt = Date.now()
+let dataSavedAt = Date.now()
 function refreshIfStale() {
-  if (Date.now() - loadedAt < REFRESH_MS) return
+  if (Date.now() - dataSavedAt < REFRESH_MS) return
   if (video.webkitPresentationMode === "picture-in-picture" || document.pictureInPictureElement) return
   location.reload()
 }
 setInterval(refreshIfStale, 10 * 60 * 1000)
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshIfStale() })
+document.getElementById("reload").onclick = async () => {
+  await caches.delete(CACHE_NAME).catch(() => {})
+  location.reload()
+}
+
+function showUpdated(updated) {
+  document.getElementById("updated").textContent =
+    `MetaTFT 데이터 ${new Date(updated).toLocaleString("ko-KR")} · 받은 시각 ${new Date(dataSavedAt).toLocaleString("ko-KR")} · 하루마다 새로 받음`
+}
+
+function startVideo(blob) {
+  clearInterval(streamTimer)
+  video.srcObject = null
+  videoUrl = URL.createObjectURL(blob)
+  video.loop = true
+  video.src = videoUrl
+  fileMode = true
+  video.addEventListener("loadedmetadata", () => {
+    // Slow playback: the picture is still, and the segment hold (with the
+    // pauses iOS throws in around it) then comes every ~30s, not every ~8s.
+    video.defaultPlaybackRate = video.playbackRate = 0.25
+    show(mode, posOf(mode))
+    video.play().catch(() => {})
+  }, { once: true })
+  log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
+}
+
+async function loadCached() {
+  if (!("caches" in window)) return false
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    const meta = await (await cache.match(META_KEY))?.json()
+    if (!meta || meta.version !== CACHE_VERSION || Date.now() - meta.savedAt > REFRESH_MS) return false
+    const blob = await (await cache.match(VIDEO_KEY))?.blob()
+    if (!blob) return false
+    dataSavedAt = meta.savedAt
+    // Only what the list and paging need; the pages themselves are in the video.
+    comps = meta.comps
+    augPages = Array.from({ length: meta.augPages }, () => null)
+    renderList()
+    showUpdated(meta.updated)
+    log(`저장된 데이터 사용 (${new Date(meta.savedAt).toLocaleString("ko-KR")} 받음, 영상 ${(blob.size / 1e6).toFixed(1)}MB)`)
+    startVideo(blob)
+    return true
+  } catch (e) {
+    log("저장된 데이터 읽기 실패: " + e.message)
+    return false
+  }
+}
+
+async function saveCache(blob, updated) {
+  if (!("caches" in window)) return
+  try {
+    const cache = await caches.open(CACHE_NAME)
+    const meta = {
+      version: CACHE_VERSION,
+      savedAt: dataSavedAt,
+      updated,
+      comps: comps.map(({ title, tier, avg }) => ({ title, tier, avg })),
+      augPages: augPages.length,
+    }
+    await cache.put(VIDEO_KEY, new Response(blob, { headers: { "Content-Type": "video/mp4" } }))
+    await cache.put(META_KEY, new Response(JSON.stringify(meta), { headers: { "Content-Type": "application/json" } }))
+  } catch (e) {
+    log("저장 실패: " + e.message)
+  }
+}
 
 ;(async () => {
   try {
+    if (await loadCached()) return
     const raw = await (await fetch(COMPS_URL, { cache: "no-store" })).json()
     const set = raw.results.data.tft_set || raw.tft_set
     const [lk, stats, builds, tierList, augIcons] = await Promise.all([
@@ -908,8 +989,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     comps = buildComps(raw, stats, lk, builds)
     augPages = tierList?.tft_set && tierList.tft_set !== set ? [] : buildAugPages(tierList, lk, augIcons)
     log(`${set} · 덱 ${comps.length}개 · 증강 티어 ${augPages.length}쪽 · 갱신 ${new Date(stats.updated).toLocaleString("ko-KR")}`)
-    document.getElementById("updated").textContent =
-      `MetaTFT 데이터 ${new Date(stats.updated).toLocaleString("ko-KR")} · 하루마다 자동 새로고침`
+    dataSavedAt = Date.now()
+    showUpdated(stats.updated)
     renderList()
     const details = await fetchDetails(comps.map((c) => c.id), raw.cluster_id)
     for (const c of comps) addDetails(c, details[c.id])
@@ -941,16 +1022,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     draw()
     try {
       const t0 = Date.now()
-      const url = await buildVideo()
+      const blob = await buildVideo()
       log(`영상 생성 ${((Date.now() - t0) / 1000).toFixed(1)}초`)
-      clearInterval(streamTimer)
-      video.srcObject = null
-      videoUrl = url
-      video.loop = true
-      video.src = url
-      fileMode = true
-      video.addEventListener("loadedmetadata", () => { show(mode, posOf(mode)); video.play().catch(() => {}) }, { once: true })
-      log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
+      startVideo(blob)
+      saveCache(blob, stats.updated)
     } catch (e) {
       log("영상 생성 실패, 스트림 모드 사용: " + e.message)
       select(0)
