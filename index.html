@@ -790,9 +790,9 @@ const cycleMode = () => { const m = (mode + 1) % modeCount(); show(m, posOf(m)) 
 // PiP skip buttons. They are recognised by their target time rather than a
 // flag, which could get stuck if iOS coalesces or drops a seeked event.
 let selfTarget = -1
-function seekTo(t) {
+function seekTo(t, hold = false) {
   selfTarget = t
-  lastSelfSeekAt = Date.now()
+  if (hold) lastHoldSeekAt = Date.now()
   video.currentTime = t
 }
 const isSelfSeek = () => Math.abs(video.currentTime - selfTarget) < 0.3
@@ -819,27 +819,28 @@ video.addEventListener("seeking", () => {
 video.addEventListener("timeupdate", () => {
   if (!fileMode || video.seeking) return
   const t0 = segStart()
-  if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5)
+  if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5, true)
 })
 
 // Play/pause in PiP cycles summary → detail → items → augment tiers, and
-// the video resumes right away so it never sits paused. If that resume is
-// refused (iOS can, while the page is in the background) the video stays
-// paused and the next tap on the button arrives as "play" instead, so a
-// play we did not start ourselves toggles too. iOS also pauses by itself
-// right after our own segment-hold seeks; those pauses only resume.
-let lastToggle = 0, lastSelfSeekAt = 0, selfPlayAt = 0
+// the video resumes right away so it never sits paused. Every tap counts,
+// however fast: when a tap lands while the video is still paused (our resume
+// not yet through, or refused by iOS in the background) it arrives as "play",
+// so a play we did not start ourselves toggles too. Only the pause iOS adds
+// by itself right after our periodic segment-hold seek is ignored.
+let lastToggle = 0, lastHoldSeekAt = 0, expectSelfPlay = false
 function resume() {
-  selfPlayAt = Date.now()
+  if (!video.paused) return
+  expectSelfPlay = true
   video.play().catch((e) => {
-    selfPlayAt = 0 // refused: the next play is the user's
+    expectSelfPlay = false // refused: the next play is the user's
     log("재생 재개 실패: " + e.message)
   })
 }
 function userToggle(kind) {
   const now = Date.now()
-  if (now - lastSelfSeekAt < 800) return log(`${kind} 무시 (자체 탐색 직후)`)
-  if (now - lastToggle < 400) return
+  if (now - lastHoldSeekAt < 600) return log(`${kind} 무시 (구간 유지 탐색 직후)`)
+  if (now - lastToggle < 60) return // one tap reported twice
   lastToggle = now
   cycleMode()
   log(`${kind} → ${MODE_NAMES[mode]}`)
@@ -850,7 +851,8 @@ video.addEventListener("pause", () => {
   resume()
 })
 video.addEventListener("play", () => {
-  if (!fileMode || !comps.length || Date.now() - selfPlayAt < 1000) return
+  if (expectSelfPlay) { expectSelfPlay = false; return }
+  if (!fileMode || !comps.length) return
   userToggle("play")
 })
 
@@ -879,7 +881,7 @@ setInterval(() => {
     if (++stuckFor >= 3) {
       log(`watchdog: 재생 정지 ${stuckFor * 2}초 → 위치 재설정`)
       stuckFor = 0
-      seekTo(segStart() + 0.5)
+      seekTo(segStart() + 0.5, true)
     }
   } else {
     stuckFor = 0
