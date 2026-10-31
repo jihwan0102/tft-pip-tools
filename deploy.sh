@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 DEST=/srv/www/tft.jihwan.kim
 sudo mkdir -p "$DEST/fonts"
-sudo install -m 644 index.html comps.html augment-icons.json "$DEST/"
+sudo install -m 644 index.html comps.html augment-icons.json og.png apple-touch-icon.png favicon.svg "$DEST/"
 sudo rsync -a --delete --include='*.woff2' --include='OFL.txt' --exclude='*' fonts/ "$DEST/fonts/"
 sudo chown -R root:root "$DEST"
 sudo find "$DEST" -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +

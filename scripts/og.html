@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Link preview (1200x630) and home-screen icon, rendered by scripts/make-images.sh. -->
+<html lang="ko">
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: "Nanum Gothic"; font-weight: 400; src: url(../fonts/NanumGothic-Regular.woff2); }
+  @font-face { font-family: "Nanum Gothic"; font-weight: 800; src: url(../fonts/NanumGothic-ExtraBold.woff2); }
+  html, body { margin: 0; background: #000; color: #fff; font-family: "Nanum Gothic", sans-serif; }
+  .og { position: relative; width: 1200px; height: 630px; display: flex; align-items: center; gap: 64px; padding: 0 110px; box-sizing: border-box; }
+  .og svg { width: 200px; height: 200px; flex: none; }
+  .og h1 { margin: 0; font-size: 92px; line-height: 1; font-weight: 800; letter-spacing: -0.02em; }
+  .og p { margin: 28px 0 0; font-size: 40px; color: #b4b4b4; }
+  .og .url { position: absolute; right: 70px; bottom: 52px; font-size: 30px; color: #949494; }
+  .icon { width: 180px; height: 180px; display: grid; place-items: center; }
+  .icon svg { width: 118px; height: 118px; }
+  body:not(.as-icon) .icon, body.as-icon .og { display: none; }
+</style>
+<body>
+<script>if (location.hash === "#icon") document.body.className = "as-icon"</script>
+<div class="og">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.2 7.25v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M12 8 15.5 10v4L12 16l-3.5-2v-4z" fill="#fff"/></svg>
+  <div>
+    <h1>TFT 덱 PiP</h1>
+    <p>PiP로 띄워 보는 메타 덱</p>
+  </div>
+  <div class="url">tft.jihwan.kim</div>
+</div>
+<div class="icon">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.2 7.25v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 8 15.5 10v4L12 16l-3.5-2v-4z" fill="#fff"/></svg>
+</div>
+</body>
+</html>

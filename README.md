@@ -61,6 +61,8 @@
 python3 scripts/update-augment-icons.py
 ```
 
+링크 미리보기(`og.png`)와 홈 화면 아이콘(`apple-touch-icon.png`)은 `scripts/og.html`을 고친 뒤 `scripts/make-images.sh`로 다시 만들어요.
+
 ---
 
 MetaTFT 및 Riot Games와 관계없는 개인 프로젝트예요. 덱 데이터와 아이콘의 권리는 각 소유자에게 있습니다.
