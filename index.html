@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TFT 덱 PiP</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap">
 <style>
-  body { margin: 0; padding: 16px; background: #111; color: #eee; font: 15px "Pretendard Variable", -apple-system, sans-serif; }
+  body { margin: 0; padding: 16px; background: #111; color: #eee; font: 15px "Nanum Gothic", -apple-system, sans-serif; }
   video { width: 100%; border-radius: 10px; background: #000; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
   button, select { flex: 1; padding: 14px; font-size: 16px; border: 0; border-radius: 10px; background: #333; color: #fff; }
@@ -144,7 +144,7 @@ function prismAt(u, v) {
   return [f(0), f(8), f(4)]
 }
 
-const FONT = '"Pretendard Variable", -apple-system, sans-serif'
+const FONT = '"Nanum Gothic", -apple-system, sans-serif'
 const W = 960, H = 540
 const canvas = Object.assign(document.createElement("canvas"), { width: W, height: H })
 const ctx = canvas.getContext("2d")
@@ -153,9 +153,10 @@ const listEl = document.getElementById("list")
 
 let comps = []
 let idx = 0
-let mode = 0 // 0 summary, 1 detail, 2 augment tiers; cycled by PiP play/pause
+let mode = 0 // 0 summary, 1 detail, 2 items, 3 augment tiers; cycled by PiP play/pause
 let augPage = 0
 let augPages = []
+let lookups = null // unit/item helpers from buildComps, reused for comp details
 
 function tierOf(avg) {
   return avg < 4.25 ? "S" : avg < 4.5 ? "A" : avg < 4.75 ? "B" : avg < 5 ? "C" : "D"
@@ -187,12 +188,14 @@ function buildComps(raw, stats, lk, buildsById) {
   const unitName = (a) => unitByAsset[a]?.name || a.replace(/^DA_(18_)?|18$/g, "")
   const unitIcon = (a) => ICON("champions", unitByAsset[a]?.apiName || a)
   const itemName = (a) => nameOf[a] || a.replace(/^DA_(18_)?/, "")
+  const unitOf = (a) => ({ asset: a, name: unitName(a), cost: unitByAsset[a]?.cost || 1, icon: unitIcon(a) })
 
   const details = raw.results.data.cluster_details
   const itemByApi = {}
   for (const i of lk.items) itemByApi[i.apiName] = i
   const isArtifact = (i) => (itemByApi[i]?.tags || []).includes("Artifact")
   const itemsOf = (b) => b.buildName.map((i) => ({ name: itemName(i), icon: ICON("items", i), artifact: isArtifact(i) }))
+  lookups = { unitOf, itemName, itemByApi }
   const total = stats.results.find((r) => r.cluster === "").places[0]
 
   // Placement histogram -> avg, then the site's default hiding rules: low pick
@@ -232,8 +235,8 @@ function buildComps(raw, stats, lk, buildsById) {
         .sort((a, b) => b[1] - a[1])
         .map(([t, n]) => `${t} ${n}`)
 
-      // Top 3 carries by their most played 3-item build. Next to it each keeps
-      // the runner-up build and the most played build that uses an artifact.
+      // Top 3 carries by their most played 3-item build, each with its three
+      // most played builds and the most played build that uses an artifact.
       const byUnit = {}
       for (const b of buildsById[id]?.builds || c.builds || []) {
         if (b.num_items === 3) (byUnit[b.unit] ||= []).push(b)
@@ -244,7 +247,6 @@ function buildComps(raw, stats, lk, buildsById) {
         .slice(0, 3)
         .map((v) => {
           const [best] = v
-          const alt = v.find((b) => b !== best && !b.buildName.some(isArtifact))
           const art = v.find((b) => b.buildName.some(isArtifact))
           return {
             name: unitName(best.unit),
@@ -252,7 +254,7 @@ function buildComps(raw, stats, lk, buildsById) {
             cost: unitByAsset[best.unit]?.cost || 1,
             three: stars.has(best.unit),
             items: itemsOf(best),
-            alt: alt && { items: itemsOf(alt), avg: alt.avg },
+            builds: v.filter((b) => !b.buildName.some(isArtifact)).slice(0, 3).map((b) => ({ items: itemsOf(b), avg: b.avg })),
             art: art && { items: itemsOf(art), avg: art.avg },
           }
         })
@@ -266,7 +268,7 @@ function buildComps(raw, stats, lk, buildsById) {
         tier: tierOf(avg),
         level: levelText(c.levelling),
         units, traits, carries,
-        board: null,
+        board: null, emblems: [], variants: [],
       }
     })
 }
@@ -301,23 +303,69 @@ function buildAugPages(tierList, lk, augIcons) {
   return pages
 }
 
-// comp_details is fetched per comp, a few at a time; only the positioning
-// part is kept.
-async function fetchPositions(ids, clusterId) {
+// comp_details is fetched per comp, a few at a time; only the parts drawn
+// are kept.
+async function fetchDetails(ids, clusterId) {
   const out = {}
   let next = 0
   await Promise.all(Array.from({ length: 6 }, async () => {
     while (next < ids.length) {
       const id = ids[next++]
       try {
-        const d = await (await fetch(DETAILS_URL(id, clusterId), { cache: "no-store" })).json()
-        out[id] = d.results?.positioning?.units || null
+        const r = (await (await fetch(DETAILS_URL(id, clusterId), { cache: "no-store" })).json()).results
+        out[id] = r && { positions: r.positioning?.units, options: r.options, itemNames: r.itemNames }
       } catch {
         out[id] = null
       }
     }
   }))
   return out
+}
+
+const MIN_SAMPLE = 50
+
+function addDetails(c, det) {
+  if (!det) return
+  c.board = placeBoard(det.positions, c.units)
+
+  // Most used emblems in this comp, each with the two units holding it most.
+  c.emblems = (det.itemNames || [])
+    .filter((x) => isEmblem(lookups.itemByApi[x.itemNames]) && x.count >= MIN_SAMPLE)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((x) => ({
+      name: lookups.itemName(x.itemNames),
+      icon: ICON("items", x.itemNames),
+      units: (x.units || [])
+        .filter((u) => u.count >= MIN_SAMPLE / 2)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 2)
+        .map((u) => ({ ...lookups.unitOf(u.units), avg: u.avg })),
+    }))
+
+  // Variants: for the levels the comp mostly ends at, the best scoring board
+  // that differs from the main one, shown as units added and removed.
+  const main = new Set(c.units.map((u) => u.asset))
+  c.variants = Object.entries(det.options || {})
+    .map(([level, opts]) => ({ level: Number(level), opts, total: opts.reduce((n, o) => n + o.count, 0) }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 4)
+    .sort((a, b) => a.level - b.level)
+    .map(({ level, opts }) => {
+      const o = [...opts].sort((a, b) => b.score - a.score).find((o) => {
+        const us = o.units_list.split("&")
+        return o.count >= MIN_SAMPLE && (us.length !== main.size || us.some((u) => !main.has(u)))
+      })
+      if (!o) return null
+      const us = new Set(o.units_list.split("&"))
+      return {
+        level,
+        avg: o.avg,
+        added: [...us].filter((u) => !main.has(u)).map(lookups.unitOf),
+        removed: [...main].filter((u) => !us.has(u)).map(lookups.unitOf),
+      }
+    })
+    .filter(Boolean)
 }
 
 // Each unit takes its most common free cell, most settled units first, the
@@ -389,7 +437,7 @@ function draw(m = mode, i = posOf(m)) {
   ctx.fillRect(0, 0, W, H)
   ctx.textBaseline = "top"
   ctx.textAlign = "left"
-  if (m === 2 && augPages[i]) return drawAugPage(augPages[i], i)
+  if (m === 3 && augPages[i]) return drawAugPage(augPages[i], i)
   const c = comps[i]
   if (!c) {
     ctx.fillStyle = "#fff"
@@ -398,6 +446,7 @@ function draw(m = mode, i = posOf(m)) {
     return
   }
   if (m === 1) return drawDetail(c, i)
+  if (m === 2) return drawItems(c, i)
 
   drawHeader(c, i, `평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
 
@@ -489,37 +538,108 @@ function drawBoard(board, x0, y0, r) {
   }
 }
 
-function drawBuildRow(label, build, x, y) {
-  ctx.fillStyle = "#999"
-  ctx.font = `20px ${FONT}`
-  ctx.fillText(label, x, y + 12)
-  if (!build) {
-    ctx.fillStyle = "#555"
-    ctx.fillText("없음", x + 56, y + 12)
-    return
-  }
-  build.items.forEach((it, m) => drawIcon(it.icon, it.name, x + 56 + m * 52, y, 44, it.artifact ? ARTIFACT_COLOR : "#444"))
-  ctx.fillStyle = "#aaa"
-  ctx.fillText(`${build.avg.toFixed(2)}등`, x + 220, y + 12)
+function label(text, x, y) {
+  ctx.fillStyle = "#8ab4ff"
+  ctx.font = `bold 22px ${FONT}`
+  ctx.fillText(text, x, y)
 }
 
-// Second page of a comp: board positioning, and for each carry the
-// runner-up build and the build to go for when an artifact shows up.
-function drawDetail(c, i) {
-  drawHeader(c, i, `상세 · 평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
-  drawBoard(c.board, 24, 200, 36)
+function avgText(avg, x, y) {
+  ctx.fillStyle = "#bbb"
+  ctx.font = `18px ${FONT}`
+  ctx.fillText(`${avg.toFixed(2)}등`, x, y)
+}
 
-  c.carries.forEach((k, j) => {
-    const y = 132 + j * 132
-    drawUnit(k, 520, y + 22, 64)
-    drawBuildRow("차선", k.alt, 600, y + 4)
-    drawBuildRow("유물", k.art, 600, y + 62)
-  })
+function pageNumber(i) {
   ctx.fillStyle = "#555"
   ctx.font = `24px ${FONT}`
   ctx.textAlign = "right"
   ctx.fillText(`${i + 1}/${comps.length}`, W - 30, H - 36)
   ctx.textAlign = "left"
+}
+
+// Second page of a comp: board positioning on the left; recommended emblems
+// and level variants on the right.
+function drawDetail(c, i) {
+  drawHeader(c, i, `상세 · 평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
+  drawBoard(c.board, 24, 200, 36)
+
+  const x0 = 520
+  label("추천 상징", x0, 124)
+  if (!c.emblems.length) {
+    ctx.fillStyle = "#666"
+    ctx.font = `18px ${FONT}`
+    ctx.fillText("데이터 없음", x0, 160)
+  }
+  c.emblems.forEach((e, j) => {
+    const y = 156 + j * 54
+    drawIcon(e.icon, e.name, x0, y, 42, null)
+    e.units.forEach((u, n) => {
+      const x = x0 + 62 + n * 172
+      drawIcon(u.icon, u.name, x, y, 42, COST_COLORS[u.cost])
+      avgText(u.avg, x + 52, y + 12)
+    })
+  })
+
+  label("변형 덱", x0, 330)
+  c.variants.forEach((v, j) => {
+    const y = 362 + j * 44
+    ctx.fillStyle = "#ddd"
+    ctx.font = `bold 18px ${FONT}`
+    ctx.fillText(`${v.level}레벨`, x0, y + 10)
+    let x = x0 + 62
+    for (const [sign, list, color] of [["+", v.added, "#4ade80"], ["−", v.removed, "#f87171"]]) {
+      if (!list.length) continue
+      ctx.fillStyle = color
+      ctx.font = `bold 24px ${FONT}`
+      ctx.fillText(sign, x, y + 5)
+      x += 20
+      for (const u of list) {
+        ctx.globalAlpha = sign === "−" ? 0.55 : 1
+        drawIcon(u.icon, u.name, x, y, 34, sign === "−" ? "#7f1d1d" : COST_COLORS[u.cost])
+        ctx.globalAlpha = 1
+        x += 42
+      }
+      x += 6
+    }
+    avgText(v.avg, Math.max(x + 4, W - 110), y + 10)
+  })
+  if (!c.variants.length) {
+    ctx.fillStyle = "#666"
+    ctx.font = `18px ${FONT}`
+    ctx.fillText("데이터 없음", x0, 366)
+  }
+  pageNumber(i)
+}
+
+// Third page of a comp: each carry's three most played builds, then the
+// build to aim for once an artifact shows up.
+function drawItems(c, i) {
+  drawHeader(c, i, `아이템 · 평균 ${c.avg.toFixed(2)}등 · ${c.level}`)
+  const colW = (W - 60) / 3
+  c.carries.forEach((k, j) => {
+    const x0 = 30 + j * colW
+    drawUnit(k, x0, 140, 56)
+    ctx.fillStyle = "#fff"
+    ctx.font = `bold 24px ${FONT}`
+    ctx.fillText(k.name, x0 + 70, 156, colW - 80)
+    const rows = [...k.builds.map((b, n) => [`${n + 1}순위`, b]), ["유물", k.art]]
+    rows.forEach(([name, b], n) => {
+      const y = 226 + n * 66
+      ctx.fillStyle = name === "유물" ? ARTIFACT_COLOR : "#999"
+      ctx.font = `bold 18px ${FONT}`
+      ctx.fillText(name, x0, y + 14)
+      if (!b) {
+        ctx.fillStyle = "#555"
+        ctx.font = `18px ${FONT}`
+        ctx.fillText("없음", x0 + 58, y + 14)
+        return
+      }
+      b.items.forEach((it, m) => drawIcon(it.icon, it.name, x0 + 58 + m * 50, y, 42, it.artifact ? ARTIFACT_COLOR : "#444"))
+      avgText(b.avg, x0 + 210, y + 12)
+    })
+  })
+  pageNumber(i)
 }
 
 // Third view: augment tier list page, one tier per block of rows.
@@ -530,23 +650,25 @@ function drawAugPage(p, k) {
   ctx.fillStyle = "#aaa"
   ctx.font = `24px ${FONT}`
   ctx.fillText(`${k + 1}/${augPages.length}`, 30, 80)
-  const x0 = 80, cellW = (W - x0 - 20) / AUG_COLS, rowH = 68
+  const x0 = 80, cellW = (W - x0 - 20) / AUG_COLS, rowH = 66, gap = 16
+  let y = 118 - rowH
   p.rows.forEach((row, r) => {
-    const y = 118 + r * rowH
+    // A new tier starts below a divider with some room for the names above.
+    y += rowH + (row.first && r > 0 ? gap : 0)
     if (row.first || r === 0) {
       ctx.fillStyle = TIER_COLORS[row.tier]
       ctx.font = `800 36px ${FONT}`
       ctx.fillText(row.tier, 34, y + 4)
       if (r > 0) {
         ctx.fillStyle = "#2a2a33"
-        ctx.fillRect(30, y - 6, W - 60, 2)
+        ctx.fillRect(30, y - gap / 2 - 3, W - 60, 2)
       }
     }
     row.augs.forEach((a, n) => {
       const x = x0 + n * cellW
       drawIcon(a.icon, a.name, x + (cellW - 46) / 2, y, 46, null)
       ctx.fillStyle = "#ddd"
-      ctx.font = `500 15px ${FONT}`
+      ctx.font = `15px ${FONT}`
       ctx.textAlign = "center"
       ctx.fillText(a.name, x + cellW / 2, y + 48, cellW - 4)
       ctx.textAlign = "left"
@@ -573,11 +695,11 @@ function renderList() {
 const SEG = 10
 let fileMode = false
 let videoUrl = null
-const MODE_NAMES = ["요약", "상세", "증강 티어"]
-const modeCount = () => (augPages.length ? 3 : 2)
-const trackLen = (m) => (m === 2 ? augPages.length : comps.length)
+const MODE_NAMES = ["요약", "상세", "아이템", "증강 티어"]
+const modeCount = () => (augPages.length ? 4 : 3)
+const trackLen = (m) => (m === 3 ? augPages.length : comps.length)
 const trackStart = (m) => { let s = 0; for (let k = 0; k < m; k++) s += trackLen(k); return s }
-const posOf = (m) => (m === 2 ? augPage : idx)
+const posOf = (m) => (m === 3 ? augPage : idx)
 const segStart = () => (trackStart(mode) + posOf(mode)) * SEG
 
 function show(m, k) {
@@ -585,7 +707,7 @@ function show(m, k) {
   const n = trackLen(m)
   k = ((k % n) + n) % n
   mode = m
-  if (m === 2) augPage = k
+  if (m === 3) augPage = k
   else idx = k
   document.getElementById("detail").textContent = `화면: ${MODE_NAMES[mode]}`
   if (fileMode) seekTo(segStart() + 0.5)
@@ -593,7 +715,7 @@ function show(m, k) {
   renderList()
 }
 // Picking a comp from the list leaves the augment view for its summary.
-const select = (i) => show(mode === 2 ? 0 : mode, i)
+const select = (i) => show(mode === 3 ? 0 : mode, i)
 const step = (d) => show(mode, posOf(mode) + d)
 const cycleMode = () => { const m = (mode + 1) % modeCount(); show(m, posOf(m)) }
 
@@ -619,7 +741,7 @@ video.addEventListener("seeking", () => {
   // A skip past either end of a view wraps within the current view.
   if (m !== mode) return show(mode, m > mode ? 0 : trackLen(mode) - 1)
   if (k !== posOf(mode)) {
-    if (mode === 2) augPage = k
+    if (mode === 3) augPage = k
     else { idx = k; renderList() }
   }
 })
@@ -629,7 +751,7 @@ video.addEventListener("timeupdate", () => {
   if (video.currentTime >= t0 + SEG - 1.5 || video.currentTime < t0) seekTo(t0 + 0.5)
 })
 
-// Play/pause in PiP cycles summary → detail → augment tiers; the video resumes right away so
+// Play/pause in PiP cycles summary → detail → items → augment tiers; the video resumes right away so
 // it never sits paused. This also recovers from pauses iOS issues itself.
 let lastToggle = 0
 video.addEventListener("pause", () => {
@@ -784,13 +906,15 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     document.getElementById("updated").textContent =
       `MetaTFT 데이터 ${new Date(stats.updated).toLocaleString("ko-KR")} · 하루마다 자동 새로고침`
     renderList()
-    const positions = await fetchPositions(comps.map((c) => c.id), raw.cluster_id)
-    for (const c of comps) c.board = placeBoard(positions[c.id], c.units)
-    log(`배치 ${comps.filter((c) => c.board).length}/${comps.length}개`)
+    const details = await fetchDetails(comps.map((c) => c.id), raw.cluster_id)
+    for (const c of comps) addDetails(c, details[c.id])
+    log(`상세 ${comps.filter((c) => c.board).length}/${comps.length}개`)
     const urls = new Set([
       ...comps.flatMap((c) => [
         ...c.units.map((u) => u.icon),
-        ...c.carries.flatMap((k) => [k.icon, ...[k.items, k.alt?.items, k.art?.items].flat().filter(Boolean).map((it) => it.icon)]),
+        ...c.carries.flatMap((k) => [k.icon, ...[k.items, ...k.builds.map((b) => b.items), k.art?.items].flat().filter(Boolean).map((it) => it.icon)]),
+        ...c.emblems.flatMap((e) => [e.icon, ...e.units.map((u) => u.icon)]),
+        ...c.variants.flatMap((v) => [...v.added, ...v.removed].map((u) => u.icon)),
       ]),
       ...augPages.flatMap((p) => p.rows.flatMap((r) => r.augs.map((a) => a.src))),
     ])
@@ -802,11 +926,11 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     // Canvas text only uses a web font once it has loaded, and the font
     // ships in subsets, so load the ones covering every string drawn.
     const text = [
-      "불러오는 중상세평균등레벨리롤빠른차선유물없음배치데이터증강티어실버골드프리즘SABCD0123456789./·★",
-      ...comps.flatMap((c) => [c.title, ...c.units.map((u) => u.name), ...c.traits]),
+      "불러오는 중상세아이템평균등레벨리롤빠른순위유물없음배치데이터추천상징변형덱증강티어실버골드프리즘SABCD0123456789./·★+−",
+      ...comps.flatMap((c) => [c.title, ...c.units.map((u) => u.name), ...c.traits, ...c.carries.map((k) => k.name)]),
       ...augPages.flatMap((p) => p.rows.flatMap((r) => r.augs.map((a) => a.name))),
     ].join("")
-    await Promise.all(["500", "bold", "800"].map((w) => document.fonts.load(`${w} 24px "Pretendard Variable"`, text)))
+    await Promise.all(["400", "700", "800"].map((w) => document.fonts.load(`${w} 24px "Nanum Gothic"`, text)))
       .catch((e) => log("글꼴 실패: " + e.message))
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
     draw()
@@ -821,7 +945,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
       video.src = url
       fileMode = true
       video.addEventListener("loadedmetadata", () => { show(mode, posOf(mode)); video.play().catch(() => {}) }, { once: true })
-      log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 증강 티어")
+      log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
     } catch (e) {
       log("영상 생성 실패, 스트림 모드 사용: " + e.message)
       select(0)
