@@ -1028,29 +1028,6 @@ function startVideo(blob) {
   log("영상 모드: PiP ±10초 = 이전/다음, ⏯ = 요약 → 상세 → 아이템 → 증강 티어")
 }
 
-// Inside the Jihwan iOS app the page only draws: every page goes to the app
-// as a JPEG and the app shows them in its own native PiP, so no video is
-// built. The app loads this page with ?native=1 in a hidden web view.
-const NATIVE = new URLSearchParams(location.search).has("native") && window.webkit?.messageHandlers?.tft
-async function exportToNative(updated) {
-  const post = (msg) => NATIVE.postMessage(msg)
-  clearInterval(streamTimer)
-  const counts = Array.from({ length: modeCount() }, (_, m) => trackLen(m))
-  post({ type: "start", counts, modes: MODE_NAMES.slice(0, counts.length), width: W, height: H })
-  for (let m = 0; m < counts.length; m++) {
-    for (let i = 0; i < counts[m]; i++) {
-      draw(m, i)
-      post({ type: "page", m, i, jpeg: canvas.toDataURL("image/jpeg", 0.9) })
-      await new Promise((r) => setTimeout(r, 0))
-    }
-  }
-  post({
-    type: "done",
-    updated,
-    comps: comps.map(({ title, tier, avg, level }) => ({ title, tier, avg, level: level || "" })),
-  })
-}
-
 async function loadCached() {
   if (!("caches" in window)) return false
   try {
@@ -1094,7 +1071,7 @@ async function saveCache(blob, updated) {
 
 ;(async () => {
   try {
-    if (!NATIVE && (await loadCached())) return
+    if (await loadCached()) return
     const raw = await (await fetch(COMPS_URL, { cache: "no-store" })).json()
     const set = raw.results.data.tft_set || raw.tft_set
     const [lk, stats, builds, tierList, augIcons] = await Promise.all([
@@ -1142,7 +1119,6 @@ async function saveCache(blob, updated) {
       .catch((e) => log("글꼴 실패: " + e.message))
     log(`아이콘 ${loaded.filter(Boolean).length}/${urls.size}개`)
     draw()
-    if (NATIVE) return exportToNative(stats.updated)
     try {
       const t0 = Date.now()
       const blob = await buildVideo()
@@ -1155,7 +1131,6 @@ async function saveCache(blob, updated) {
       enablePip()
     }
   } catch (e) {
-    NATIVE?.postMessage({ type: "error", message: e.message })
     listEl.innerHTML = `<p class="state">MetaTFT에서 덱을 불러오지 못했어요 (${e.message}). <button class="text" onclick="location.reload()">다시 시도</button></p>`
   }
 })()
